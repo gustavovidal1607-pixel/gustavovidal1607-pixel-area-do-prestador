@@ -24,12 +24,16 @@ const CONVENIOS_PRESTADOR = ['AMIL', 'ASSIM', 'BRADESCO SAÚDE', 'BRADESCO OPERA
 // convênio novo, basta acrescentar aqui:
 //   { tipo: 'dias_apos_envio', dias: N }           -> data de envio + N dias
 //   { tipo: 'ultimo_dia_util_mes_seguinte' }       -> último dia útil do mês seguinte à competência
+//   { tipo: 'dia_fixo_mes_seguinte', dia: N }      -> dia N do mês seguinte à competência
 // Convênio sem regra: a previsão fica vazia para a equipe preencher.
 // A chave pode ser o nome completo ou o começo dele ("UNIMED" vale para UNIMED ...).
 const REGRAS_PREVISAO = {
   'BRADESCO SAÚDE': { tipo: 'dias_apos_envio', dias: 60 },      // regra do Medware
   'BRADESCO OPERADORA': { tipo: 'dias_apos_envio', dias: 65 },  // regra do Medware
   'UNIMED': { tipo: 'ultimo_dia_util_mes_seguinte' },
+  'PETROBRÁS': { tipo: 'ultimo_dia_util_mes_seguinte' },          // Willian 23/11
+  'PETROBRAS': { tipo: 'ultimo_dia_util_mes_seguinte' },
+  'MEDISERVICE': { tipo: 'dia_fixo_mes_seguinte', dia: 28 },      // Willian 23/11: dia 28 do mês seguinte ao fechamento
 };
 const TIPOS_REPASSE = ['Repasse instrumentador', 'Repasse honorário', 'Espelho de pagamento', 'Demonstrativo de pagamento', 'Outro'];
 
@@ -451,6 +455,12 @@ function sugerirPrevisao({ convenio, data_envio, competencia }){
   if (r.tipo === 'dias_apos_envio'){
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(data_envio || ''))) return null;
     return new Date(Date.parse(data_envio + 'T00:00:00Z') + r.dias * 864e5).toISOString().slice(0, 10);
+  }
+  if (r.tipo === 'dia_fixo_mes_seguinte'){
+    if (!ehCompetencia(competencia)) return null;
+    let ano = Number(competencia.slice(0, 4)), mes = Number(competencia.slice(5, 7)) + 1;
+    if (mes === 13){ mes = 1; ano += 1; }
+    return `${ano}-${String(mes).padStart(2, '0')}-${String(r.dia).padStart(2, '0')}`;
   }
   if (r.tipo === 'ultimo_dia_util_mes_seguinte'){
     if (!ehCompetencia(competencia)) return null;
