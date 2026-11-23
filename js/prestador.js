@@ -651,7 +651,7 @@
         </div>` : `<p class="folha-vazio">Nada faturado nesta competência.</p>`}
         ${r.por_medico && r.por_medico.length > 1 ? `
         <section class="folha-conv">
-          <h2>Por médico</h2>
+          <h2>Por executante</h2>
           <div class="folha-rolagem">
           <table class="folha-tabela">
             <thead><tr><th>Executante</th>${cabValores}</tr></thead>
