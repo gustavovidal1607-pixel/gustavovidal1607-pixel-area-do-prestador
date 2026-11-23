@@ -576,8 +576,9 @@
   // de guias, valor faturado e previsão de pagamento (até quando o prestador
   // tem para receber), com o total. Sem os protocolos dos portais (Gustavo 23/11).
   // O prestador vê na aba "Resumo"; a equipe abre pelo botão "Resumo" do prestador.
-  const previsaoTexto = g => g.pago ? (g.data_pagamento ? `Pago em ${dataBR(g.data_pagamento)}` : 'Pago')
-    : g.previsao ? dataBR(g.previsao) : 'A definir';
+  // Resumo de FATURAMENTO: só o que foi enviado e até quando tem para receber.
+  // O que já foi pago não entra aqui (isso é o resumo de pagamento).
+  const previsaoTexto = g => g.previsao ? dataBR(g.previsao) : 'A definir';
   const RODAPE_EMPRESA = 'Faturas Med · Avenida Rui Barbosa, 1011, Sl 205 e 206, Centro – Macaé/RJ · www.faturasmed.com.br · (22) 2213-0101 · WhatsApp (22) 99877-5196';
 
   function htmlFolha(r, medico){
@@ -604,7 +605,7 @@
               <td>${h(tipoNome(g.tipo))}</td>
               <td class="n">${g.guias}</td>
               <td class="n">${dinheiro(g.faturado)}</td>
-              <td class="prev ${g.pago ? 'pago' : ''}">${h(previsaoTexto(g))}</td>
+              <td class="prev">${h(previsaoTexto(g))}</td>
             </tr>`; }).join('')}</tbody>
           <tfoot><tr><td colspan="2">Total</td><td class="n">${total.guias}</td><td class="n">${dinheiro(total.faturado)}</td><td></td></tr></tfoot>
         </table>` : `<p class="folha-vazio">Nada faturado nesta competência.</p>`}
@@ -648,7 +649,8 @@
         document.body.appendChild(a); a.click(); a.remove();
       }
       setTimeout(() => URL.revokeObjectURL(url), 120000);
-      aviso(`Pronto: ${nome} (${paginas} página${paginas === 1 ? '' : 's'})${capas && !protocolos.length ? ' — nenhum protocolo anexado nesta competência' : ''}${falhas && falhas.length ? ` — não deu para anexar: ${falhas.join(', ')}` : ''}`);
+      aviso(`Pronto: ${nome} (${paginas} página${paginas === 1 ? '' : 's'})${capas && !protocolos.length ? ' — sem capas: nenhum protocolo desta competência foi anexado na aba Protocolos' : capas ? ` — ${protocolos.length} capa${protocolos.length === 1 ? '' : 's'}` : ''}${falhas && falhas.length ? ` — não deu para anexar: ${falhas.join(', ')}` : ''}`);
+      if (capas && !protocolos.length) CF().aviso('Nenhum protocolo desta competência está anexado no sistema. As capas vêm dos PDFs que a equipe anexa em Protocolos.', true);
     } catch (e){
       console.error(e);
       if (status) status.textContent = '';
@@ -673,6 +675,7 @@
         </label>
         ${seletorMedico('f-med')}
         <button type="button" class="botao primario" id="btn-baixar-resumo" disabled>Baixar PDF</button>
+        <button type="button" class="botao secundario" id="btn-capas-resumo" disabled title="Baixa o resumo com os protocolos de envio da competência atrás, para imprimir">Baixar com as capas</button>
       </div>`)}
       <div class="resumo-aba"><article class="folha" id="folha"><div class="carregando">Carregando…</div></article></div>
       <p class="resumo-status" id="r-status" aria-live="polite"></p>`;
@@ -684,9 +687,10 @@
     catch (e){ $('#folha').innerHTML = `<div class="vazio"><strong>Não deu para carregar</strong>${h(e.message)}</div>`; return; }
     if (P.comp !== comp || P.aba !== 'resumo') return;
     $('#folha').innerHTML = htmlFolha(r, P.medico);
-    const b = $('#btn-baixar-resumo');
-    b.disabled = false;
+    const b = $('#btn-baixar-resumo'), bc = $('#btn-capas-resumo');
+    b.disabled = false; bc.disabled = false;
     b.onclick = () => baixarResumo(r, P.medico, b, $('#r-status'));
+    bc.onclick = () => baixarResumo(r, P.medico, bc, $('#r-status'), { capas: true });
   }
 
   // Equipe: resumo de um prestador numa tela por cima (com competência e médico).
@@ -716,6 +720,7 @@
         </label>` : ''}
         <div class="resumo-botoes">
           <button type="button" class="botao primario" id="r-baixar">Baixar PDF</button>
+          <button type="button" class="botao secundario" id="r-capas">Baixar com as capas</button>
           <button type="button" class="botao fantasma" id="r-fechar">Fechar</button>
         </div>
         <p class="resumo-status" id="r-status" aria-live="polite"></p>
@@ -724,6 +729,7 @@
     const botao = $('#r-baixar');
     $('#r-fechar').onclick = fecharResumo;
     botao.onclick = () => baixarResumo(r, medico, botao, $('#r-status'));
+    $('#r-capas').onclick = () => baixarResumo(r, medico, $('#r-capas'), $('#r-status'), { capas: true, prestadorId });
     $('#r-comp').onchange = ev => abrirResumo(ev.target.value, prestadorId, false, medico);
     if ($('#r-med')) $('#r-med').onchange = ev => abrirResumo(comp, prestadorId, false, ev.target.value);
     tela.scrollTop = 0;
@@ -848,7 +854,7 @@
         texto(tipoNome(g.tipo), xTipo, y, { tam: 9.5 });
         texto(String(g.guias), xQtd, y, { tam: 9.5, alinhar: 'dir' });
         texto(dinheiro(g.faturado), xValor, y, { tam: 9.5, alinhar: 'dir' });
-        texto(previsaoTexto(g), xPrev, y, { tam: 9.5, alinhar: 'dir', c: g.pago ? VERDE : TINTA, f: g.pago ? negrito : fonte });
+        texto(previsaoTexto(g), xPrev, y, { tam: 9.5, alinhar: 'dir' });
         y -= 6; pagina.drawLine({ start: { x: M, y }, end: { x: W - M, y }, thickness: 0.5, color: FINA }); y -= 13;
       }
     }
