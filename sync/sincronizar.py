@@ -42,9 +42,26 @@ PASTA_BASE = r"\\faturasmed\Documents\CONTROLE DE PAGAMENTO"
 
 # Prestadores sincronizados (nome igual ao da pasta e ao cadastro do portal).
 PRESTADORES = [
-    "VINICIUS ANTUNES",
-    "RENAN BRITO",
+    "ADRIANO LIMA", "ALEXANDRE NEAGELE", "ANCARDIO", "ANGIOMED", "AZUL OFTALMOLOGIA",
+    "BOCKUS", "BRUNO SANTOS", "CAEM", "CARLA MARCELI", "CDT", "CENTRUS",
+    "CHRISTIANO MANHÃES", "CLAUDIA LEMOS", "CLAYTON CESAR", "CLINICAR", "CORPO & MENTE",
+    "FABIO PESSANHA BRITO", "FACIAL CARE", "FELIPE CURVELO", "FERNANDO DE SIQUEIRA",
+    "FERNANDO LINHARES", "GABRIEL FABRIS", "GUTO MAXILO", "HMS RIO", "HS ENDOSCOPIA",
+    "HUMBERTO HENRIQUE", "IMN - MACAÉ", "IMN - RO", "INSPIRAR", "INTEGRADA INFANTIL",
+    "IRNAK", "JOÃO GUILHERME", "JOSÉ CARLOS DE MENEZES", "LUCAS MISSIBA PJ",
+    "MARCELO SOARES NEVES", "MAXILO FACIAL", "MS SANTOS", "MULTIFISIO",
+    "NATHALIA SABER DE ANDRADE", "NILBERTO SIQUEIRA", "NORTEMED", "OXIGENIO", "PAM",
+    "PATHOLOGY", "PAULA BECKER", "PEDRO MAY", "RAFAEL PEÇANHA", "RENAN BRITO",
+    "RODRIGO LOUREIRO-HMS", "SAMIRA SALIM DE CARVALHO", "VANESSA ZUBATY",
+    "VERONICA RODRIGUES", "VINICIUS ANTUNES",
 ]
+
+# Pastas com OUTRO nome que pertencem ao mesmo prestador (planilhas somadas no portal).
+# CAEM na Petrobras fatura como pessoa física; a Azul tem uma pasta por médico na Unimed.
+PASTAS_EXTRAS = {
+    "CAEM": ["CLAUDIO LUIZ LOURENÇO"],
+    "AZUL OFTALMOLOGIA": ["ERICK MARCET - AZUL OFTALMOLOGIA", "RACHEL CAMARGO - AZUL OFTALMOLOGIA"],
+}
 
 # Campo normalizado -> nomes possíveis do cabeçalho (já sem acento, maiúsculo).
 # Bradesco/SulAmérica/Petrobras usam os nomes curtos; Unimed usa os longos.
@@ -270,28 +287,30 @@ def aplicar_competencias(linhas, convenio=""):
 
 
 def achar_planilha(prestador, pasta_base):
-    """[(convenio, caminho)] de todas as planilhas do prestador."""
-    achadas = []
+    """[(convenio, [caminhos])] de todas as planilhas do prestador (pasta dele + PASTAS_EXTRAS)."""
     try:
         convenios = sorted(os.listdir(pasta_base))
     except OSError as e:
         raise SystemExit(f"Não consegui abrir {pasta_base}: {e}")
+    nomes = [prestador] + PASTAS_EXTRAS.get(prestador, [])
+    achadas = {}
     for convenio in convenios:
-        pasta = os.path.join(pasta_base, convenio, prestador)
-        if not os.path.isdir(pasta):
-            continue
-        esperado = os.path.join(pasta, f"{prestador} - {convenio}.xlsx")
-        if os.path.isfile(esperado):
-            achadas.append((convenio, esperado))
-            continue
-        candidatos = [f for f in os.listdir(pasta)
-                      if f.lower().endswith(".xlsx") and not f.startswith("~$")
-                      and sem_acento(f).startswith(sem_acento(prestador))]
-        if len(candidatos) == 1:
-            achadas.append((convenio, os.path.join(pasta, candidatos[0])))
-        elif candidatos:
-            print(f"  ! {convenio}: mais de uma planilha em {pasta}, pulei: {candidatos}", file=sys.stderr)
-    return achadas
+        for nome in nomes:
+            pasta = os.path.join(pasta_base, convenio, nome)
+            if not os.path.isdir(pasta):
+                continue
+            esperado = os.path.join(pasta, f"{nome} - {convenio}.xlsx")
+            if os.path.isfile(esperado):
+                achadas.setdefault(convenio, []).append(esperado)
+                continue
+            candidatos = [f for f in os.listdir(pasta)
+                          if f.lower().endswith(".xlsx") and not f.startswith("~$")
+                          and sem_acento(f).startswith(sem_acento(nome))]
+            if len(candidatos) == 1:
+                achadas.setdefault(convenio, []).append(os.path.join(pasta, candidatos[0]))
+            elif candidatos:
+                print(f"  ! {convenio}: mais de uma planilha em {pasta}, pulei: {candidatos}", file=sys.stderr)
+    return sorted(achadas.items())
 
 
 def ler_planilha(caminho, convenio):
@@ -440,15 +459,25 @@ def main():
     pacotes, falhas = [], 0
     for prestador in prestadores:
         print(f"== {prestador}")
-        for convenio, caminho in achar_planilha(prestador, a.pasta):
-            try:
-                linhas, avisos, aba, detalhe = ler_planilha(caminho, convenio)
-            except Exception as e:  # planilha aberta/corrompida: segue com as outras
-                print(f"  ! {convenio}: não consegui ler ({e})", file=sys.stderr)
+        for convenio, caminhos in achar_planilha(prestador, a.pasta):
+            linhas, avisos, detalhe, abas, modificado, erro = [], [], [], [], None, False
+            for caminho in caminhos:
+                try:
+                    l1, a1, aba1, d1 = ler_planilha(caminho, convenio)
+                except Exception as e:  # planilha aberta/corrompida: segue com as outras
+                    print(f"  ! {convenio}: não consegui ler {os.path.basename(caminho)} ({e})", file=sys.stderr)
+                    erro = True
+                    break
+                linhas += l1; avisos += a1; detalhe += d1
+                if aba1: abas.append(aba1)
+                m = dt.datetime.fromtimestamp(os.path.getmtime(caminho)).astimezone().isoformat()
+                modificado = max(modificado or m, m)
+            if erro:  # não manda metade: o portal trocaria tudo do convênio pelo que leu
                 falhas += 1
                 continue
-            modificado = dt.datetime.fromtimestamp(os.path.getmtime(caminho)).astimezone().isoformat()
-            pacote = {"prestador": prestador, "convenio": convenio, "arquivo": os.path.basename(caminho),
+            aba = "+".join(abas) if len(abas) > 1 else (abas[0] if abas else None)
+            pacote = {"prestador": prestador, "convenio": convenio,
+                      "arquivo": " + ".join(os.path.basename(c) for c in caminhos),
                       "arquivo_modificado": modificado, "linhas": linhas,
                       "competencias_por_envio": detalhe}
             total = round(sum(float(l["faturado"]) for l in linhas if isinstance(l["faturado"], (int, float))), 2)
