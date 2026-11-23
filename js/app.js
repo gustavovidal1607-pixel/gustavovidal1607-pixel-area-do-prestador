@@ -262,7 +262,7 @@
     const c = $('#conteudo');
     if (u.perfil === 'prestador') return window.CFPrestador.portal(c, estado.aba);
     if (estado.aba === 'acessos'){
-      c.innerHTML = `<div class="acessos acessos-um" id="acessos"><div class="carregando">Carregando…</div></div>`;
+      c.innerHTML = `<div class="acessos" id="acessos"><div class="carregando">Carregando…</div></div>`;
       return carregarAcessos();
     }
     return window.CFPrestador.equipe(c);
@@ -285,13 +285,19 @@
     const { usuarios, eu } = estado.admin;
     const prestadores = estado.admin.prestadores || [];
     const ativosP = prestadores.filter(p => p.ativo);
+    const semAcento = t => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().trim();
     $('#acessos').innerHTML = `
-      <section class="painel">
-        <h2>Acessos</h2>
+      <section class="painel prest-coluna">
+        <div class="bloco-titulo">
+          <h2>Acessos <small class="contagem" id="acessos-contagem">${usuarios.length}</small></h2>
+          <label class="busca"><span class="sr-only">Pesquisar acesso</span>
+            <input type="search" id="busca-acesso" placeholder="Pesquisar por nome, usuário ou prestador…" autocomplete="off" value="${h(estado.buscaAcesso || '')}">
+          </label>
+        </div>
         <p class="sub">Quem entra no sistema. Cada prestador vê só os próprios dados; a equipe vê tudo. A senha pode ser redefinida a qualquer momento.</p>
-        <ul class="lista-simples">
+        <ul class="lista-simples rolavel" id="lista-acessos">
           ${usuarios.map(x => `
-            <li class="${x.ativo ? '' : 'inativo'}">
+            <li class="${x.ativo ? '' : 'inativo'}" data-nome="${h(semAcento(x.nome + ' ' + x.login + ' ' + (x.prestador_nome || '')))}">
               <div class="info">
                 <strong>${h(x.nome)} <span class="mono" style="font-weight:500;color:var(--cinza);font-size:13px">${h(x.login)}</span></strong>
                 <small><span class="selo ${x.perfil}">${x.perfil === 'faturas' ? 'Faturas Med' : 'Prestador'}</span> ${h(x.prestador_nome || '')}${x.ativo ? '' : ' <span class="selo off">desativado</span>'}${x.id === eu ? ' · você' : ''}</small>
@@ -300,8 +306,10 @@
               ${x.id === eu ? '' : `<button type="button" class="link ${x.ativo ? 'perigo' : ''}" data-usuario-ativo="${x.id}" data-valor="${!x.ativo}">${x.ativo ? 'Desativar' : 'Reativar'}</button>`}
             </li>`).join('')}
         </ul>
-        <hr class="separador">
-        <h3 class="titulo-form">Novo acesso</h3>
+      </section>
+      <section class="painel">
+        <h2>Novo acesso</h2>
+        <p class="sub">Crie o login de um prestador (ele vê só o que é dele) ou de alguém da equipe.</p>
         <form id="form-usuario" class="form-grade" autocomplete="off">
           <label class="campo"><span>Nome da pessoa</span><input name="nome" maxlength="120" required></label>
           <label class="campo"><span>Usuário (para entrar)</span><input name="login" maxlength="40" autocapitalize="none" required><small>Sem espaço nem acento. Ex.: renan.brito</small></label>
@@ -321,6 +329,18 @@
       </section>`;
 
     const caixa = $('#acessos');
+    const filtrar = () => {
+      const termo = semAcento(estado.buscaAcesso);
+      let vistos = 0;
+      const itens = $$('#lista-acessos li[data-nome]');
+      itens.forEach(li => { const m = !termo || li.dataset.nome.includes(termo); li.hidden = !m; if (m) vistos++; });
+      $('#acessos-contagem').textContent = termo ? `${vistos} de ${itens.length}` : String(itens.length);
+      const vazio = $('#lista-acessos .sem-resultado');
+      if (termo && !vistos){ if (!vazio) $('#lista-acessos').insertAdjacentHTML('beforeend', `<li class="vazio-li sem-resultado">Nenhum acesso com "${h(estado.buscaAcesso)}".</li>`); }
+      else if (vazio) vazio.remove();
+    };
+    filtrar();
+    $('#busca-acesso').oninput = ev => { estado.buscaAcesso = ev.target.value; filtrar(); };
     const fu = $('#form-usuario');
     const ajustar = () => { $$('[data-para]', fu).forEach(el => { el.hidden = el.dataset.para !== fu.perfil.value; }); };
     fu.perfil.onchange = ajustar; ajustar();
