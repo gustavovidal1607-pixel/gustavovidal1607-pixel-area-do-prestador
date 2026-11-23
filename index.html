@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Área do Prestador · Faturas Med</title>
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="icon" type="image/png" sizes="32x32" href="img/favicon-32.png">
+  <link rel="apple-touch-icon" href="img/favicon-180.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&family=Poppins:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+  <!-- Abertura: a logo da Faturas Med se monta (barras sobem, seta passa, letras uma a uma) -->
+  <div id="abertura" class="abertura" aria-hidden="true">
+    <img class="abertura-foto" src="img/abertura.jpg" alt="">
+    <div class="abertura-veu"></div>
+    <div class="abertura-centro">
+      <div class="abertura-painel"><div id="abertura-logo" class="abertura-logo"></div></div>
+      <p class="abertura-legenda">Área do Prestador</p>
+    </div>
+  </div>
+
+  <!-- Entrada -->
+  <main id="tela-login" class="tela-login" hidden>
+    <img class="login-fundo" src="img/abertura.jpg" alt="">
+    <div class="login-veu"></div>
+    <section class="login-cartao" aria-labelledby="login-titulo">
+      <img class="login-logo" src="img/logo.svg" alt="Faturas Med — Faturamento Médico e Hospitalar">
+      <h1 id="login-titulo">Área do Prestador</h1>
+      <div class="seletor-perfil" role="radiogroup" aria-label="Quem está entrando">
+        <button type="button" role="radio" data-perfil="prestador" aria-checked="true">Prestador</button>
+        <button type="button" role="radio" data-perfil="faturas" aria-checked="false">FaturasMed</button>
+      </div>
+      <p id="login-dica" class="login-dica">Médico ou clínica: entre com o seu usuário para acompanhar o faturamento.</p>
+      <form id="form-login" novalidate>
+        <label class="campo">
+          <span>Usuário</span>
+          <input id="login-usuario" name="usuario" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+        </label>
+        <label class="campo">
+          <span>Senha</span>
+          <input id="login-senha" name="senha" type="password" autocomplete="current-password" required>
+        </label>
+        <p id="login-erro" class="erro" role="alert"></p>
+        <button class="botao primario largo" type="submit">Entrar</button>
+      </form>
+    </section>
+    <p class="login-rodape">Dúvidas com o acesso? Fale com a equipe Faturas Med.</p>
+  </main>
+
+  <!-- Sistema -->
+  <div id="app" hidden>
+    <header class="topo">
+      <div class="topo-marca">
+        <img class="topo-logo" src="img/logo.svg" alt="Faturas Med">
+        <div class="topo-titulo">
+          <span id="topo-sistema">Área do Prestador</span>
+          <strong id="topo-local"></strong>
+        </div>
+      </div>
+      <nav id="topo-abas" class="topo-abas" aria-label="Seções" hidden></nav>
+      <div class="topo-usuario">
+        <span id="topo-nome" class="topo-nome"></span>
+        <button id="btn-senha" type="button" class="link">Trocar senha</button>
+        <button id="btn-sair" type="button" class="botao fantasma pequeno">Sair</button>
+      </div>
+    </header>
+    <main id="conteudo" class="conteudo"></main>
+  </div>
+
+  <div id="avisos" class="avisos" aria-live="polite"></div>
+  <dialog id="dialogo" class="dialogo"></dialog>
+  <!-- Resumo de faturamento do prestador (tela + PDF) -->
+  <div id="resumo" class="resumo-tela" hidden></div>
+
+  <script src="js/vendor/blob-client.js"></script>
+  <script src="js/app.js"></script>
+  <script src="js/prestador.js"></script>
+</body>
+</html>

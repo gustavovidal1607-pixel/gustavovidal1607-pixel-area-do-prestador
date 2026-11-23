@@ -1,0 +1,495 @@
+#!/usr/bin/env python3
+"""Sincroniza as planilhas de controle de pagamento com o portal do prestador.
+
+Para cada prestador da lista PRESTADORES, procura em
+  \\\\faturasmed\\Documents\\CONTROLE DE PAGAMENTO\\<CONVENIO>\\<PRESTADOR>\\<PRESTADOR> - <CONVENIO>.xlsx
+COPIA a planilha para uma pasta temporária (o original nunca é aberto para
+escrita — os robôs usam esses arquivos), lê a aba CONTROLE (ou a aba que tiver
+o cabeçalho certo), normaliza as linhas e manda para POST /api/sync, um
+convênio por vez. O portal troca todas as linhas daquele prestador+convênio.
+
+Uso:
+  python sync/sincronizar.py --url https://<portal> --login <usuario.equipe>   (senha: FATURAS_SYNC_SENHA ou pergunta)
+  python sync/sincronizar.py --url http://localhost:3000 --token teste         (token, se SYNC_TOKEN existir no portal)
+  python sync/sincronizar.py --json saida.json                                 (só gera o JSON, não envia)
+  python sync/sincronizar.py --prestador "RENAN BRITO" --url ... --login ...
+
+Autenticação: login de um usuário da EQUIPE Faturas Med (perfil equipe) OU o
+token SYNC_TOKEN. A senha nunca fica em arquivo: vem da variável de ambiente
+FATURAS_SYNC_SENHA ou é pedida no terminal.
+
+Variáveis de ambiente aceitas: PORTAL_URL, FATURAS_SYNC_LOGIN, FATURAS_SYNC_SENHA,
+SYNC_TOKEN, CONTROLE_PAGAMENTO (pasta base).
+Requer: Python 3.8+ e openpyxl.
+"""
+
+import argparse
+import datetime as dt
+import getpass
+import http.cookiejar
+import json
+import os
+import shutil
+import sys
+import tempfile
+import unicodedata
+import urllib.error
+import urllib.request
+
+import openpyxl
+
+PASTA_BASE = r"\\faturasmed\Documents\CONTROLE DE PAGAMENTO"
+
+# Prestadores sincronizados (nome igual ao da pasta e ao cadastro do portal).
+PRESTADORES = [
+    "VINICIUS ANTUNES",
+    "RENAN BRITO",
+]
+
+# Campo normalizado -> nomes possíveis do cabeçalho (já sem acento, maiúsculo).
+# Bradesco/SulAmérica/Petrobras usam os nomes curtos; Unimed usa os longos.
+CAMPOS = {
+    "operadora": ["CONVENIO"],
+    "comp": ["COMP", "COMPETENCIA"],
+    "lote": ["LOTE"],
+    "data_lote": ["DATA LOTE", "DATA DE FATURAMENTO", "DATA DO LOTE"],
+    "tipo": ["TIPO", "TIPO DE GUIA"],
+    "paciente": ["PACIENTE", "NOME DO PACIENTE"],
+    "matricula": ["MATRICULA", "CARTEIRINHA", "CARTEIRA"],
+    "guia": ["GUIA", "NUMERO DA GUIA"],
+    "data": ["DATA", "DATA DO ATENDIMENTO", "DATA ATENDIMENTO"],
+    "grau": ["GRAU"],
+    "codigo": ["CODIGO", "CODIGO DO PROCEDIMENTO"],
+    "procedimento": ["PROCEDIMENTO", "NOME DO PROCEDIMENTO"],
+    "qtd": ["QTD", "QUANTIDADE"],
+    "faturado": ["VALOR FATURADO"],
+    "recebido": ["VALOR RECEBIDO"],
+    "glosado": ["VALOR GLOSADO", "VALOR DE GLOSA"],
+    "data_pagamento": ["DATA PAGAMENTO", "DATA DE PAGAMENTO"],
+    "status": ["STATUS"],
+    "motivo_glosa": ["MOTIVO DE GLOSA", "CRITICA DE GLOSA"],
+    "previsao_pagamento": ["PREVISAO DE PAGAMENTO", "PREVISAO PAGAMENTO", "PREVISAO"],
+}
+OBRIGATORIOS = ["comp", "guia", "faturado"]
+
+# Fora da Unimed, data do lote no dia 01 é tratada como marcador de mês (não é
+# a data real de envio): a linha fica com a coluna COMP. Na Unimed a DATA DE
+# FATURAMENTO é sempre dia 01 e vale o mês dela (mês de envio).
+DIA_01_E_MARCADOR = True
+
+# Regra da competência pela pausa nos envios (ver competencias_por_envio).
+PAUSA_MINIMA_DIAS = 7
+PRIMEIRO_GRUPO_ATE_DIA = 15
+DIA_UTIL_LIMITE = 5
+
+
+def sem_acento(texto):
+    """'Motivo de  glosa' -> 'MOTIVO DE GLOSA' (sem acento, um espaço)."""
+    t = unicodedata.normalize("NFD", str(texto or ""))
+    t = "".join(c for c in t if unicodedata.category(c) != "Mn")
+    return " ".join(t.upper().split())
+
+
+def so_digitos(v):
+    return "".join(c for c in str(texto_id(v) or "") if c.isdigit())
+
+
+def convenio_da_linha(fonte, matricula, lote):
+    """Convênio normalizado da linha. Regra da casa para o Bradesco:
+    carteirinha começando com 954 = BRADESCO OPERADORA, o resto = BRADESCO SAÚDE;
+    sem carteirinha, pelo lote/protocolo: 341 = Operadora, 340 = Saúde."""
+    if sem_acento(fonte) != "BRADESCO":
+        return fonte
+    m = so_digitos(matricula)
+    if m:
+        return "BRADESCO OPERADORA" if m.startswith("954") else "BRADESCO SAÚDE"
+    l = so_digitos(lote)
+    if l.startswith("341"):
+        return "BRADESCO OPERADORA"
+    return "BRADESCO SAÚDE"
+
+
+def mapear_cabecalho(linha):
+    """Devolve {campo: índice da coluna}. A primeira coluna com o nome vence."""
+    nomes = [sem_acento(c) for c in linha]
+    mapa = {}
+    for campo, opcoes in CAMPOS.items():
+        for opcao in opcoes:
+            if opcao in nomes:
+                mapa[campo] = nomes.index(opcao)
+                break
+    return mapa
+
+
+def valor_json(v):
+    if isinstance(v, dt.datetime):
+        return v.date().isoformat()
+    if isinstance(v, dt.date):
+        return v.isoformat()
+    if isinstance(v, float) and v.is_integer() and abs(v) > 1e6:
+        return str(int(v))  # número de guia/lote lido como float
+    return v
+
+
+def texto_id(v):
+    """Lote, guia, código: sempre texto, sem '.0'."""
+    if v is None:
+        return None
+    if isinstance(v, float) and v.is_integer():
+        v = int(v)
+    t = str(v).strip()
+    return t or None
+
+
+def competencia(v):
+    if isinstance(v, (dt.datetime, dt.date)):
+        return f"{v.year:04d}-{v.month:02d}"
+    t = str(v or "").strip()
+    for formato in ("%m/%Y", "%m.%Y", "%Y-%m", "%d/%m/%Y", "%Y-%m-%d"):
+        try:
+            d = dt.datetime.strptime(t[:10], formato)
+            return f"{d.year:04d}-{d.month:02d}"
+        except ValueError:
+            pass
+    return None
+
+
+def como_data(v):
+    if isinstance(v, dt.datetime):
+        return v.date()
+    if isinstance(v, dt.date):
+        return v
+    t = str(v or "").strip()[:10]
+    for formato in ("%d/%m/%Y", "%Y-%m-%d"):
+        try:
+            return dt.datetime.strptime(t, formato).date()
+        except ValueError:
+            pass
+    return None
+
+
+def pascoa(ano):
+    """Domingo de Páscoa (algoritmo de Meeus/Jones/Butcher)."""
+    a, b, c = ano % 19, ano // 100, ano % 100
+    d, e = b // 4, b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i, k = c // 4, c % 4
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    mes = (h + l - 7 * m + 114) // 31
+    dia = (h + l - 7 * m + 114) % 31 + 1
+    return dt.date(ano, mes, dia)
+
+
+def feriados(ano):
+    """Feriados nacionais + Carnaval (seg/ter) e Corpus Christi, que param o envio."""
+    p = pascoa(ano)
+    fixos = [(1, 1), (4, 21), (5, 1), (9, 7), (10, 12), (11, 2), (11, 15), (11, 20), (12, 25)]
+    moveis = [p - dt.timedelta(days=48), p - dt.timedelta(days=47), p - dt.timedelta(days=2), p + dt.timedelta(days=60)]
+    return {dt.date(ano, m, d) for m, d in fixos} | set(moveis)
+
+
+def dia_util(ano, mes, n=DIA_UTIL_LIMITE):
+    """n-ésimo dia útil do mês (seg-sex, sem feriado)."""
+    fer = feriados(ano)
+    d, conta = dt.date(ano, mes, 1), 0
+    while True:
+        if d.weekday() < 5 and d not in fer:
+            conta += 1
+            if conta == n:
+                return d
+        d += dt.timedelta(days=1)
+
+
+def mes_anterior(ano, mes):
+    return (ano - 1, 12) if mes == 1 else (ano, mes - 1)
+
+
+def competencias_por_envio(datas):
+    """Regra do Willian para as datas de envio/fechamento dos lotes de UM
+    prestador + convênio. Para cada mês: ordena as datas e acha a maior pausa
+    entre envios seguidos. Se a pausa for >= 7 dias e o primeiro grupo terminar
+    até o dia 15, o primeiro grupo é da competência anterior e o resto do mês
+    vigente. Sem pausa assim: se todos os envios do mês estão até o 5º dia útil,
+    o mês todo é da competência anterior; senão, do mês vigente.
+    Devolve ({data: 'AAAA-MM'}, [detalhe por mês])."""
+    por_mes = {}
+    for d in sorted(set(datas)):
+        por_mes.setdefault((d.year, d.month), []).append(d)
+    comp, detalhe = {}, []
+    for (ano, mes), ds in sorted(por_mes.items()):
+        ant = "%04d-%02d" % mes_anterior(ano, mes)
+        vig = "%04d-%02d" % (ano, mes)
+        quinto = dia_util(ano, mes)
+        gaps = [((ds[i + 1] - ds[i]).days, i) for i in range(len(ds) - 1)]
+        maior, corte = max(gaps) if gaps else (0, -1)
+        if maior >= PAUSA_MINIMA_DIAS and ds[corte].day <= PRIMEIRO_GRUPO_ATE_DIA:
+            grupos = [(ds[:corte + 1], ant), (ds[corte + 1:], vig)]
+            motivo = f"pausa de {maior} dias depois de {ds[corte]:%d/%m}"
+        elif ds[-1] <= quinto:
+            grupos = [(ds, ant)]
+            motivo = f"todos até o 5º dia útil ({quinto:%d/%m})"
+        else:
+            grupos = [(ds, vig)]
+            motivo = f"sem pausa >= {PAUSA_MINIMA_DIAS} dias e envios depois do 5º dia útil ({quinto:%d/%m})" if gaps else f"envio depois do 5º dia útil ({quinto:%d/%m})"
+        for g, c in grupos:
+            for d in g:
+                comp[d] = c
+        detalhe.append({"mes": vig, "motivo": motivo, "grupos": [([d.isoformat() for d in g], c) for g, c in grupos]})
+    return comp, detalhe
+
+
+def aplicar_competencias(linhas, convenio=""):
+    """Competência de cada linha.
+    - UNIMED (Voxis): o próprio MÊS DE ENVIO do lote (a Unimed fecha do dia 1 ao
+      último dia do mês). Aqui a DATA DE FATURAMENTO vem sempre no dia 01, mas
+      o mês dela é o mês de envio. Sem data: coluna COMP.
+    - Demais convênios: regra da pausa / 5º dia útil (competencias_por_envio)
+      sobre as datas do lote; sem data (ou dia 01, que é só marcador): coluna COMP."""
+    if sem_acento(convenio).startswith("UNIMED"):
+        por_mes = {}
+        for l in linhas:
+            d = como_data(l.get("data_lote"))
+            l["comp"] = f"{d.year:04d}-{d.month:02d}" if d else l["comp_planilha"]
+            if d:
+                por_mes.setdefault(l["comp"], set()).add(d)
+        return [{"mes": m, "motivo": "Unimed: competência = mês de envio",
+                 "grupos": [(sorted(x.isoformat() for x in ds), m)]} for m, ds in sorted(por_mes.items())]
+    datas = {}
+    for l in linhas:
+        d = como_data(l.get("data_lote"))
+        if d and not (DIA_01_E_MARCADOR and d.day == 1):
+            datas[id(l)] = d
+    mapa, detalhe = competencias_por_envio(datas.values())
+    for l in linhas:
+        d = datas.get(id(l))
+        l["comp"] = mapa[d] if d else l["comp_planilha"]
+    return detalhe
+
+
+def achar_planilha(prestador, pasta_base):
+    """[(convenio, caminho)] de todas as planilhas do prestador."""
+    achadas = []
+    try:
+        convenios = sorted(os.listdir(pasta_base))
+    except OSError as e:
+        raise SystemExit(f"Não consegui abrir {pasta_base}: {e}")
+    for convenio in convenios:
+        pasta = os.path.join(pasta_base, convenio, prestador)
+        if not os.path.isdir(pasta):
+            continue
+        esperado = os.path.join(pasta, f"{prestador} - {convenio}.xlsx")
+        if os.path.isfile(esperado):
+            achadas.append((convenio, esperado))
+            continue
+        candidatos = [f for f in os.listdir(pasta)
+                      if f.lower().endswith(".xlsx") and not f.startswith("~$")
+                      and sem_acento(f).startswith(sem_acento(prestador))]
+        if len(candidatos) == 1:
+            achadas.append((convenio, os.path.join(pasta, candidatos[0])))
+        elif candidatos:
+            print(f"  ! {convenio}: mais de uma planilha em {pasta}, pulei: {candidatos}", file=sys.stderr)
+    return achadas
+
+
+def ler_planilha(caminho, convenio):
+    """Copia para pasta temporária e lê. Devolve (linhas, avisos, aba)."""
+    temp = tempfile.mkdtemp(prefix="sync_prestador_")
+    try:
+        copia = os.path.join(temp, "copia.xlsx")
+        shutil.copyfile(caminho, copia)  # só leitura do original
+        wb = openpyxl.load_workbook(copia, read_only=True, data_only=True)
+        try:
+            aba, mapa, linhas_aba = None, None, None
+            nomes = ["CONTROLE"] + [n for n in wb.sheetnames if n != "CONTROLE"]
+            for nome in nomes:
+                if nome not in wb.sheetnames:
+                    continue
+                ws = wb[nome]
+                todas = ws.iter_rows(values_only=True)
+                cab = next(todas, None)
+                if not cab:
+                    continue
+                m = mapear_cabecalho(cab)
+                if all(c in m for c in OBRIGATORIOS):
+                    aba, mapa, linhas_aba = nome, m, list(todas)
+                    break
+            if aba is None:
+                return [], ["nenhuma aba com cabeçalho COMP/GUIA/VALOR FATURADO"], None, []
+            linhas, avisos = [], []
+            for n, r in enumerate(linhas_aba, start=2):
+                if not any(c not in (None, "") for c in r):
+                    continue
+                pega = lambda campo: r[mapa[campo]] if campo in mapa and mapa[campo] < len(r) else None
+                comp_planilha = competencia(pega("comp"))
+                # A competência final sai de aplicar_competencias (data do lote);
+                # aqui só garante que a linha tem COMP ou data do lote.
+                comp = comp_planilha or (competencia(pega("data_lote")) if como_data(pega("data_lote")) else None)
+                fat = pega("faturado")
+                if comp is None:
+                    avisos.append(f"linha {n}: sem competência")
+                    continue
+                if fat in (None, ""):
+                    avisos.append(f"linha {n}: sem valor faturado")
+                    continue
+                linha = {
+                    "linha_planilha": n,
+                    "comp_planilha": comp_planilha,
+                    "convenio": convenio_da_linha(convenio, pega("matricula"), pega("lote")),
+                    "operadora": pega("operadora"),
+                    "comp": comp,
+                    "lote": texto_id(pega("lote")),
+                    "data_lote": valor_json(pega("data_lote")),
+                    "tipo": pega("tipo"),
+                    "paciente": pega("paciente"),
+                    "guia": texto_id(pega("guia")),
+                    "data": valor_json(pega("data")),
+                    "grau": texto_id(pega("grau")),
+                    "codigo": texto_id(pega("codigo")),
+                    "procedimento": pega("procedimento"),
+                    "qtd": pega("qtd"),
+                    "faturado": fat,
+                    "recebido": pega("recebido"),
+                    "glosado": pega("glosado"),
+                    "data_pagamento": valor_json(pega("data_pagamento")),
+                    "status": pega("status"),
+                    "motivo_glosa": pega("motivo_glosa"),
+                    # sem a coluna, o portal calcula pela regra do convênio
+                    "previsao_pagamento": valor_json(pega("previsao_pagamento")),
+                }
+                # Datas que vieram como texto ficam como texto; o portal entende DD/MM/AAAA.
+                linhas.append({k: (valor_json(v) if not isinstance(v, str) else v.strip()) for k, v in linha.items()})
+            detalhe = aplicar_competencias(linhas, convenio)
+            return linhas, avisos, aba, detalhe
+        finally:
+            wb.close()
+    finally:
+        shutil.rmtree(temp, ignore_errors=True)
+
+
+class Portal:
+    """Conversa com o portal: sessão da equipe (cookie) ou token."""
+
+    def __init__(self, url, token=None):
+        self.url = url.rstrip("/")
+        self.token = token
+        self.abridor = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+
+    def _post(self, caminho, corpo):
+        cab = {"Content-Type": "application/json"}
+        if self.token:
+            cab["X-Sync-Token"] = self.token
+        req = urllib.request.Request(self.url + caminho, data=json.dumps(corpo, ensure_ascii=False).encode("utf-8"),
+                                     method="POST", headers=cab)
+        try:
+            with self.abridor.open(req, timeout=180) as r:
+                return json.loads(r.read().decode("utf-8") or "{}")
+        except urllib.error.HTTPError as e:
+            texto = e.read().decode("utf-8", "replace")
+            try:
+                texto = json.loads(texto).get("erro", texto)
+            except ValueError:
+                pass
+            raise RuntimeError(f"HTTP {e.code}: {texto}")
+
+    def entrar(self, login, senha):
+        r = self._post("/api/auth?acao=entrar", {"login": login, "senha": senha, "perfil": "faturas"})
+        u = r.get("usuario") or {}
+        if u.get("perfil") != "faturas":
+            raise RuntimeError("o usuário não é da equipe Faturas Med")
+        return u
+
+    def sair(self):
+        try:
+            self._post("/api/auth?acao=sair", {})
+        except Exception:
+            pass
+
+    def sincronizar(self, pacote):
+        return self._post("/api/sync", pacote)
+
+
+def main():
+    sys.stdout.reconfigure(encoding="utf-8")
+    ap = argparse.ArgumentParser(description="Sincroniza as planilhas de controle com o portal do prestador.")
+    ap.add_argument("--url", default=os.environ.get("PORTAL_URL"), help="endereço do portal (ex.: http://localhost:3000)")
+    ap.add_argument("--login", default=os.environ.get("FATURAS_SYNC_LOGIN"), help="usuário da EQUIPE Faturas Med (senha: FATURAS_SYNC_SENHA ou pergunta)")
+    ap.add_argument("--token", default=os.environ.get("SYNC_TOKEN"), help="SYNC_TOKEN do portal (alternativa ao --login)")
+    ap.add_argument("--json", metavar="SAIDA", help="só grava o JSON normalizado neste arquivo (não envia)")
+    ap.add_argument("--pasta", default=os.environ.get("CONTROLE_PAGAMENTO", PASTA_BASE), help="pasta CONTROLE DE PAGAMENTO")
+    ap.add_argument("--prestador", action="append", help="sincroniza só este prestador (pode repetir)")
+    ap.add_argument("--detalhe", action="store_true", help="mostra as datas de envio de cada mês e a competência de cada grupo")
+    a = ap.parse_args()
+    if not a.json and (not a.url or not (a.login or a.token)):
+        ap.error("informe --url e --login (ou --token), ou use --json")
+
+    portal = None
+    if not a.json:
+        portal = Portal(a.url, None if a.login else a.token)
+        if a.login:
+            senha = os.environ.get("FATURAS_SYNC_SENHA") or getpass.getpass(f"Senha de {a.login} no portal: ")
+            try:
+                u = portal.entrar(a.login, senha)
+            except Exception as e:
+                raise SystemExit(f"Não consegui entrar no portal como {a.login}: {e}")
+            print(f"Entrou no portal como {u.get('nome')} (equipe).")
+
+    prestadores = [p.upper() for p in (a.prestador or PRESTADORES)]
+    pacotes, falhas = [], 0
+    for prestador in prestadores:
+        print(f"== {prestador}")
+        for convenio, caminho in achar_planilha(prestador, a.pasta):
+            try:
+                linhas, avisos, aba, detalhe = ler_planilha(caminho, convenio)
+            except Exception as e:  # planilha aberta/corrompida: segue com as outras
+                print(f"  ! {convenio}: não consegui ler ({e})", file=sys.stderr)
+                falhas += 1
+                continue
+            modificado = dt.datetime.fromtimestamp(os.path.getmtime(caminho)).astimezone().isoformat()
+            pacote = {"prestador": prestador, "convenio": convenio, "arquivo": os.path.basename(caminho),
+                      "arquivo_modificado": modificado, "linhas": linhas,
+                      "competencias_por_envio": detalhe}
+            total = round(sum(float(l["faturado"]) for l in linhas if isinstance(l["faturado"], (int, float))), 2)
+            print(f"  {convenio:<12} aba {aba or '-':<9} {len(linhas):>5} linhas  faturado {total:>12,.2f}"
+                  + (f"  ({len(avisos)} ignoradas)" if avisos else ""))
+            if a.detalhe:
+                for m in detalhe:
+                    grupos = "  |  ".join(f"{', '.join(x[8:10] + '/' + x[5:7] for x in g)} -> {c[5:7]}/{c[:4]}" for g, c in m["grupos"])
+                    print(f"      envios {m['mes'][5:7]}/{m['mes'][:4]}: {grupos}   ({m['motivo']})")
+            mudou = [l for l in linhas if l["comp_planilha"] and l["comp"] != l["comp_planilha"]]
+            sem_data = sum(1 for l in linhas if not l.get("data_lote"))
+            print(f"    competência pela data do lote: {len(mudou)} de {len(linhas)} linhas mudaram em relação à coluna COMP"
+                  + (f" ({sem_data} sem data do lote: ficou a COMP)" if sem_data else ""))
+            subconv = sorted({l["convenio"] for l in linhas} - {convenio})
+            for sc in subconv:
+                sl = [l for l in linhas if l["convenio"] == sc]
+                sm = sum(1 for l in sl if l["comp_planilha"] and l["comp"] != l["comp_planilha"])
+                print(f"    {sc:<20} {len(sl):>5} linhas  faturado {sum(float(l['faturado']) for l in sl):>12,.2f}  ({sm} mudaram de competência)")
+            if not linhas and aba:
+                print(f"    (aba {aba} só tem o cabeçalho: nenhuma linha lançada)")
+            if a.json:
+                pacotes.append(pacote)
+                continue
+            if aba is None:
+                print(f"  ! {convenio}: {avisos[0]} — não enviei para não apagar o que já está no portal", file=sys.stderr)
+                falhas += 1
+                continue
+            try:
+                r = portal.sincronizar(pacote)
+                print(f"    -> portal: {r.get('linhas')} linhas gravadas" + (f", {r.get('ignoradas')} ignoradas" if r.get("ignoradas") else ""))
+            except Exception as e:
+                print(f"  ! {convenio}: envio falhou: {e}", file=sys.stderr)
+                falhas += 1
+    if a.json:
+        with open(a.json, "w", encoding="utf-8") as f:
+            json.dump(pacotes, f, ensure_ascii=False, indent=1)
+        print(f"JSON gravado em {a.json}")
+    if portal and a.login:
+        portal.sair()
+    sys.exit(1 if falhas else 0)
+
+
+if __name__ == "__main__":
+    main()

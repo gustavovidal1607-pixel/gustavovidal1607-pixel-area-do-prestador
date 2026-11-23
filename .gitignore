@@ -1,0 +1,10 @@
+node_modules/
+dados-local/
+.vercel
+.env
+.env.local
+.DS_Store
+Thumbs.db
+*.log
+__pycache__/
+*.pyc
