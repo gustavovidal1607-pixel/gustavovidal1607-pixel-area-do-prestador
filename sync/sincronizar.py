@@ -263,13 +263,29 @@ def competencias_por_envio(datas):
     return comp, detalhe
 
 
+# Gustavo 23/11/2026: a coluna COMP da planilha MANDA quando está preenchida
+# (ele mantém as competências à mão). A regra pela data do lote só vale para
+# linha sem COMP.
+PLANILHA_MANDA = True
+
+
 def aplicar_competencias(linhas, convenio=""):
-    """Competência de cada linha.
+    """Competência de cada linha. Com PLANILHA_MANDA, a coluna COMP preenchida
+    prevalece; o cálculo abaixo só preenche as linhas sem COMP.
     - UNIMED (Voxis): o próprio MÊS DE ENVIO do lote (a Unimed fecha do dia 1 ao
       último dia do mês). Aqui a DATA DE FATURAMENTO vem sempre no dia 01, mas
       o mês dela é o mês de envio. Sem data: coluna COMP.
     - Demais convênios: regra da pausa / 5º dia útil (competencias_por_envio)
       sobre as datas do lote; sem data (ou dia 01, que é só marcador): coluna COMP."""
+    detalhe = _competencias_pela_data(linhas, convenio)
+    if PLANILHA_MANDA:
+        for l in linhas:
+            if l["comp_planilha"]:
+                l["comp"] = l["comp_planilha"]
+    return detalhe
+
+
+def _competencias_pela_data(linhas, convenio=""):
     if sem_acento(convenio).startswith("UNIMED"):
         por_mes = {}
         for l in linhas:
@@ -512,8 +528,12 @@ def main():
                     print(f"      envios {m['mes'][5:7]}/{m['mes'][:4]}: {grupos}   ({m['motivo']})")
             mudou = [l for l in linhas if l["comp_planilha"] and l["comp"] != l["comp_planilha"]]
             sem_data = sum(1 for l in linhas if not l.get("data_lote"))
-            print(f"    competência pela data do lote: {len(mudou)} de {len(linhas)} linhas mudaram em relação à coluna COMP"
-                  + (f" ({sem_data} sem data do lote: ficou a COMP)" if sem_data else ""))
+            sem_comp = sum(1 for l in linhas if not l["comp_planilha"])
+            if PLANILHA_MANDA:
+                print(f"    competência: coluna COMP da planilha" + (f" ({sem_comp} linhas sem COMP calculadas pela data do lote)" if sem_comp else ""))
+            else:
+                print(f"    competência pela data do lote: {len(mudou)} de {len(linhas)} linhas mudaram em relação à coluna COMP"
+                      + (f" ({sem_data} sem data do lote: ficou a COMP)" if sem_data else ""))
             subconv = sorted({l["convenio"] for l in linhas} - {convenio})
             for sc in subconv:
                 sl = [l for l in linhas if l["convenio"] == sc]

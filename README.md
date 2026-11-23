@@ -29,7 +29,7 @@ python sync/sincronizar.py --prestador "RENAN BRITO" --url ... --login ...      
 Os prestadores sincronizados ficam na lista `PRESTADORES` no começo do script. A senha nunca fica em arquivo. Para rodar todo dia, agendar no Agendador de Tarefas do Windows num PC com acesso a `\\faturasmed`.
 
 Regras aplicadas:
-- **Competência** = fechamento/envio do lote. **Unimed**: mês de envio. Outros: dentro do mês, se há um grupo de envios no começo (terminando até o dia 15), uma pausa ≥ 7 dias e depois outros envios, o primeiro grupo é da competência anterior; sem pausa assim, envio até o **5º dia útil** é da competência anterior. Sem data do lote: coluna COMP. `--detalhe` mostra as datas e a competência de cada grupo.
+- **Competência** = coluna **COMP** da planilha quando preenchida (decisão do Gustavo em 23/11/2026: ele mantém as competências à mão; `PLANILHA_MANDA` no script). Linha sem COMP: fechamento/envio do lote. **Unimed**: mês de envio. Outros: dentro do mês, se há um grupo de envios no começo (terminando até o dia 15), uma pausa ≥ 7 dias e depois outros envios, o primeiro grupo é da competência anterior; sem pausa assim, envio até o **5º dia útil** é da competência anterior. Sem data do lote: coluna COMP. `--detalhe` mostra as datas e a competência de cada grupo.
 - **Bradesco** separado: carteirinha começando com **954** = BRADESCO OPERADORA, o resto = BRADESCO SAÚDE; sem carteirinha, lote 341 = Operadora, 340 = Saúde.
 - **Unimed com glosa negativa** (pagou mais que o faturado): não conta como glosa; o recebido é o real.
 - **Tipo de guia**: CONSULTA → Consulta; SADT e SP/SADT → SADT; GIH/HONORÁRIO → Honorário (GIH). Guias = números de guia distintos.
