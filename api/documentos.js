@@ -27,7 +27,15 @@ module.exports = L.rota(async (req, res) => {
 
   // Sugestão de previsão de pagamento pela regra do convênio (tela da equipe).
   if (req.method === 'GET' && acao === 'sugerir-previsao'){
-    return L.responder(res, 200, { previsao: L.sugerirPrevisao({ convenio: p.get('convenio'), data_envio: p.get('data_envio'), competencia: p.get('competencia') }) });
+    // Tipo de guia: o informado ou o do lote com esse número nas planilhas (Bradesco
+    // conta os dias pelo tipo); sem tipo = regra antiga do convênio.
+    let tipo = (p.get('tipo') || '').toUpperCase();
+    const prest = Number(p.get('prestador')), numero = (p.get('numero') || '').trim();
+    if (!tipo && numero && Number.isInteger(prest) && prest > 0 && (equipe || prest === u.prestador_id)){
+      const [x] = await db.query(`SELECT tipo FROM producao WHERE prestador_id = $1 AND lote = $2 AND tipo IS NOT NULL GROUP BY tipo ORDER BY count(*) DESC LIMIT 1`, [prest, numero]);
+      if (x) tipo = x.tipo;
+    }
+    return L.responder(res, 200, { previsao: L.sugerirPrevisao({ convenio: p.get('convenio'), data_envio: p.get('data_envio'), competencia: p.get('competencia'), tipo }), tipo: tipo || null });
   }
 
   if (req.method === 'GET' && acao === 'lista'){

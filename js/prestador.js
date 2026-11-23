@@ -430,7 +430,7 @@
               <span>${nGuias} guia${nGuias === 1 ? '' : 's'}</span>
               <span>Faturado <b>${dinheiro(tg.faturado)}</b></span>
               <span>Recebido <b>${dinheiro(tg.recebido)}</b></span>
-              ${sitLote !== 'pago' && previsaoLote(g.linhas) ? `<span class="previsao">Previsão <b>${dataBR(previsaoLote(g.linhas))}</b></span>` : ''}
+              <span class="previsao">${situacaoHtml(g.convenio, situacaoLinhas(g.linhas))}</span>
               ${selo(sitLote)}
             </div>
           </header>
@@ -458,7 +458,6 @@
     }).join('');
   }
 
-  const previsaoLote = linhas => linhas.map(l => l.previsao).filter(Boolean).sort().pop() || '';
 
   function situacaoLote(linhas){
     const s = new Set(linhas.map(l => l.situacao));
@@ -578,10 +577,35 @@
   // contas do painel — glosa negativa da Unimed não conta; a receber = faturado
   // das linhas sem recebido e sem glosa). Sem os protocolos dos portais.
   // O prestador vê na aba "Resumo"; a equipe abre pelo botão "Resumo" do prestador.
-  const previsaoTexto = g => g.previsao ? dataBR(g.previsao) : 'A definir';
+  // Situação do grupo / lote (Willian 23/11): "Pago em …", "Aguardando pagamento dia …"
+  // (Bradesco não tem data certa: "… até …"), misto = as duas coisas, sem data = "(sem data)".
+  // s = { n_pagos, n_aguardando, tudo_glosado, pago_de, data_pagamento, previsao }
+  const ddmm = iso => iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}` : '';
+  function situacaoGrupo(convenio, s){
+    const aguarda = s.previsao ? `${/^BRADESCO/i.test(convenio || '') ? 'até' : 'dia'} ${dataBR(s.previsao)}` : '(sem data)';
+    const ate = s.data_pagamento;
+    if (!s.n_aguardando){
+      if (s.tudo_glosado) return { partes: ['Glosado'], classe: 'glosado' };
+      if (!ate) return { partes: ['Pago'], classe: 'pago' };
+      return { partes: [s.pago_de && s.pago_de !== ate ? `Pago em ${ddmm(s.pago_de)} a ${dataBR(ate)}` : `Pago em ${dataBR(ate)}`], classe: 'pago' };
+    }
+    if (!s.n_pagos) return { partes: [`Aguardando pagamento ${aguarda}`], classe: 'aguardando' };
+    return { partes: [ate ? `Pago em ${ddmm(ate)}` : 'Parte paga', `resto aguardando ${aguarda}`], classe: 'misto' };
+  }
+  // Mesmos números para um lote da aba Faturas (a partir das linhas).
+  function situacaoLinhas(linhas){
+    const pagos = linhas.filter(l => l.situacao !== 'aguardando'), aguard = linhas.filter(l => l.situacao === 'aguardando');
+    const datas = pagos.map(l => l.data_pagamento).filter(Boolean).sort();
+    return {
+      n_pagos: pagos.length, n_aguardando: aguard.length, tudo_glosado: linhas.length > 0 && linhas.every(l => l.situacao === 'glosado'),
+      pago_de: datas[0] || null, data_pagamento: datas[datas.length - 1] || null,
+      previsao: aguard.map(l => l.previsao).filter(Boolean).sort().pop() || null,
+    };
+  }
+  const situacaoHtml = (convenio, s) => { const x = situacaoGrupo(convenio, s); return x.partes.map(p => `<span>${h(p)}</span>`).join(' · '); };
   const pctGlosa = g => g.faturado > 0 ? (g.glosado / g.faturado) * 100 : 0;
   const RODAPE_EMPRESA = 'Faturas Med · Avenida Rui Barbosa, 1011, Sl 205 e 206, Centro – Macaé/RJ · www.faturasmed.com.br · (22) 2213-0101 · WhatsApp (22) 99877-5196';
-  const NOTA_RESUMO = 'Glosado = faturado e não pago pelo convênio (pagamento acima do faturado não conta como glosa). A receber = faturado ainda sem pagamento e sem glosa. % glosa = glosado ÷ faturado. Previsão de pagamento = até quando o convênio tem para pagar o que foi enviado; "A definir" = ainda sem data.';
+  const NOTA_RESUMO = 'Glosado = faturado e não pago pelo convênio (pagamento acima do faturado não conta como glosa). A receber = faturado ainda sem pagamento e sem glosa. % glosa = glosado ÷ faturado. Situação: "Pago em" = data do pagamento; "Aguardando pagamento dia" = data prevista; Bradesco não tem data certa, por isso "até" (prazo máximo).';
   // Linhas da folha (tela e PDF): grupo convênio × tipo, subtotal do convênio quando há mais de um tipo.
   function linhasResumo(r){
     const sub = {};
@@ -613,14 +637,14 @@
         ${r.grupos.length ? `
         <div class="folha-rolagem">
         <table class="folha-tabela">
-          <thead><tr><th>Convênio</th><th>Tipo do lote</th>${cabValores}<th class="prev">Previsão de pagamento</th></tr></thead>
+          <thead><tr><th>Convênio</th><th>Tipo do lote</th>${cabValores}<th class="sit-txt">Situação</th></tr></thead>
           <tbody>${linhasResumo(r).map(l => l.tipo === 'sub'
             ? `<tr class="subtotal"><td></td><td>Subtotal</td>${valores(l.g)}<td></td></tr>`
             : `<tr class="${l.primeira ? 'novo-conv' : ''}">
               <td class="conv">${l.primeira ? h(l.g.convenio) : ''}</td>
               <td>${h(tipoNome(l.g.tipo))}</td>
               ${valores(l.g)}
-              <td class="prev">${h(previsaoTexto(l.g))}</td>
+              <td class="sit-txt ${situacaoGrupo(l.g.convenio, l.g).classe}">${situacaoHtml(l.g.convenio, l.g)}</td>
             </tr>`).join('')}</tbody>
           <tfoot><tr><td colspan="2">Total</td>${valores(total)}<td></td></tr></tfoot>
         </table>
@@ -854,25 +878,22 @@
     const espaco = precisa => { if (y - precisa < 70) novaPagina(false); };
 
     novaPagina(true);
-    // Colunas: Convênio | Tipo do lote | Guias | Faturado | Recebido | Glosado | A receber | % glosa | Previsão
-    const xConv = M + 8, xTipo = 184, xPrev = W - M - 8;
+    // Colunas: Convênio | Tipo do lote | Guias | Faturado | Recebido | Glosado | A receber | % glosa | Situação
+    const xConv = M + 8, xTipo = 160, xSit = 602, xFim = W - M - 6;
     const COLS = [  // números alinhados à direita
-      { rot: 'GUIAS', x: 330, v: g => String(g.guias) },
-      { rot: 'FATURADO', x: 418, v: g => dinheiro(g.faturado) },
-      { rot: 'RECEBIDO', x: 503, v: g => dinheiro(g.recebido) },
-      { rot: 'GLOSADO', x: 588, v: g => dinheiro(g.glosado) },
-      { rot: 'A RECEBER', x: 673, v: g => dinheiro(g.a_receber) },
-      { rot: '% GLOSA', x: 722, v: g => pct(pctGlosa(g)) },
+      { rot: 'GUIAS', x: 262, v: g => String(g.guias) },
+      { rot: 'FATURADO', x: 337, v: g => dinheiro(g.faturado) },
+      { rot: 'RECEBIDO', x: 410, v: g => dinheiro(g.recebido) },
+      { rot: 'GLOSADO', x: 478, v: g => dinheiro(g.glosado) },
+      { rot: 'A RECEBER', x: 548, v: g => dinheiro(g.a_receber) },
+      { rot: '% GLOSA', x: 590, v: g => pct(pctGlosa(g)) },
     ];
     const cabecalhoTabela = (primeiro = 'CONVÊNIO', comTipo = true, comPrev = true) => {
       pagina.drawRectangle({ x: M, y: y - 9, width: W - 2 * M, height: 26, color: CLARO });
       texto(primeiro, xConv, y, { f: negrito, tam: 7.5, c: CINZA });
       if (comTipo) texto('TIPO DO LOTE', xTipo, y, { f: negrito, tam: 7.5, c: CINZA });
       COLS.forEach(c => texto(c.rot, c.x, y, { f: negrito, tam: 7.5, c: CINZA, alinhar: 'dir' }));
-      if (comPrev){
-        texto('PREVISÃO DE', xPrev, y + 4.5, { f: negrito, tam: 7.5, c: CINZA, alinhar: 'dir' });
-        texto('PAGAMENTO', xPrev, y - 4.5, { f: negrito, tam: 7.5, c: CINZA, alinhar: 'dir' });
-      }
+      if (comPrev) texto('SITUAÇÃO', xSit, y, { f: negrito, tam: 7.5, c: CINZA });
       y -= 25;
     };
     const valoresLinha = (g, opc) => COLS.forEach(c => texto(c.v(g), c.x, y, { tam: 9, alinhar: 'dir', ...opc }));
@@ -890,10 +911,23 @@
           texto('Subtotal', xTipo, y, { f: negrito, tam: 9 });
           valoresLinha(g, { f: negrito });
         } else {
-          if (l.primeira || g.convenio !== convAtual) texto(caber(g.convenio, negrito, 9, xTipo - xConv - 8), xConv, y, { f: negrito, tam: 9 });
+          if (l.primeira || g.convenio !== convAtual) { const tc = larg(g.convenio, negrito, 9) <= xTipo - xConv - 6 ? 9 : 8; texto(caber(g.convenio, negrito, tc, xTipo - xConv - 4), xConv, y, { f: negrito, tam: tc }); }
           texto(caber(tipoNome(g.tipo), fonte, 9, COLS[0].x - xTipo - 30), xTipo, y, { tam: 9 });
           valoresLinha(g);
-          texto(previsaoTexto(g), xPrev, y, { tam: 9, alinhar: 'dir' });
+          // situação: uma linha; se não couber (pago + aguardando), duas linhas menores
+          const sg = situacaoGrupo(g.convenio, g), corSit = sg.classe === 'pago' ? VERDE : TINTA;
+          const umaLinha = sg.partes.join(' · ');
+          if (larg(umaLinha, fonte, 8.5) <= xFim - xSit){
+            if (sg.partes.length > 1){  // parte paga em verde, o resto normal
+              const p0 = sg.partes[0] + ' · ';
+              texto(p0, xSit, y, { tam: 8.5, c: VERDE });
+              texto(sg.partes.slice(1).join(' · '), xSit + larg(p0, fonte, 8.5), y, { tam: 8.5 });
+            } else texto(umaLinha, xSit, y, { tam: 8.5, c: corSit });
+          }
+          else if (sg.partes.length > 1){
+            texto(caber(sg.partes[0] + ' ·', fonte, 7.5, xFim - xSit), xSit, y + 4, { tam: 7.5, c: VERDE });
+            texto(caber(sg.partes[1], fonte, 7.5, xFim - xSit), xSit, y - 4.5, { tam: 7.5 });
+          } else texto(caber(umaLinha, fonte, 7.5, xFim - xSit), xSit, y, { tam: 7.5, c: corSit });
         }
         convAtual = g.convenio;
         y -= 6; pagina.drawLine({ start: { x: M, y }, end: { x: W - M, y }, thickness: 0.5, color: LINHA }); y -= 13;
@@ -1124,12 +1158,13 @@
       }
     };
     // Previsão de pagamento sugerida pela tabela de regras do servidor
-    // (Bradesco Saúde +60 dias, Operadora +65, Unimed último dia útil do mês
-    // seguinte à competência; outros convênios: vazio). Editou, não muda mais.
+    // (Bradesco por tipo de guia do lote, Unimed/Petrobrás último dia útil do mês
+    // seguinte à competência, Mediservice dia 28; outros: vazio). Editou, não muda mais.
     const sugerirPrevisao = async () => {
       if (f.previsao_pagamento.dataset.mexido) return;
       const m = f.competencia.value.match(/^(0[1-9]|1[0-2])\/(\d{4})$/);
-      const q = new URLSearchParams({ acao: 'sugerir-previsao', convenio: f.convenio.value, data_envio: f.data_envio.value, competencia: m ? `${m[2]}-${m[1]}` : '' });
+      // número + prestador: o servidor acha o tipo de guia do lote (Bradesco conta os dias pelo tipo)
+      const q = new URLSearchParams({ acao: 'sugerir-previsao', convenio: f.convenio.value, data_envio: f.data_envio.value, competencia: m ? `${m[2]}-${m[1]}` : '', numero: f.numero.value.trim(), prestador: f.prestador_id.value });
       try {
         const r = await CF().api(`/api/documentos?${q}`);
         if (f.previsao_pagamento.dataset.mexido) return;
@@ -1141,6 +1176,7 @@
     f.data_envio.onchange = () => { sugerirComp(); sugerirPrevisao(); };
     f.convenio.addEventListener('change', () => { sugerirComp(); sugerirPrevisao(); });
     f.competencia.addEventListener('change', sugerirPrevisao);
+    f.numero.addEventListener('change', sugerirPrevisao);
     const receber = lista => {
       const a = lista && lista[0];
       if (!a) return;

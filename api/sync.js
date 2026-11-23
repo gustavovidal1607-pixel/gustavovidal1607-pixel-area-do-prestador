@@ -204,7 +204,9 @@ function normalizar(x, fonte){
   const convenio = conv && (conv === fonte || conv.startsWith(fonte + ' ')) ? conv.slice(0, 60) : fonte;
   // Previsão: a da planilha (se tiver a coluna) ou a da regra do convênio
   // (a partir da data do lote = envio). A do protocolo, se houver, prevalece na leitura.
-  const previsao = data(x.previsao_pagamento) || L.sugerirPrevisao({ convenio, data_envio: data(x.data_lote), competencia: comp });
+  // Bradesco: os dias dependem do tipo de guia (consulta/SADT/honorário).
+  const tipo = tipoGuia(x.tipo);
+  const previsao = data(x.previsao_pagamento) || L.sugerirPrevisao({ convenio, data_envio: data(x.data_lote), competencia: comp, tipo });
   return {
     previsao_pagamento: previsao,
     convenio,
@@ -212,7 +214,7 @@ function normalizar(x, fonte){
     competencia: comp,
     lote: texto(x.lote, 60),
     data_lote: data(x.data_lote),
-    tipo: tipoGuia(x.tipo),
+    tipo,
     tipo_original: texto(x.tipo, 40),
     paciente: texto(x.paciente, 160),
     guia: texto(x.guia, 60),

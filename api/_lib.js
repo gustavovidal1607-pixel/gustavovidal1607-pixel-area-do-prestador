@@ -23,13 +23,16 @@ const CONVENIOS_PRESTADOR = ['AMIL', 'ASSIM', 'BRADESCO SAÚDE', 'BRADESCO OPERA
 // Previsão de pagamento sugerida por convênio. Para cadastrar a regra de um
 // convênio novo, basta acrescentar aqui:
 //   { tipo: 'dias_apos_envio', dias: N }           -> data de envio + N dias
+//     (+ por_tipo: { CONSULTA: N, SADT: N, 'HONORÁRIO': N } -> dias pelo tipo de guia do lote)
 //   { tipo: 'ultimo_dia_util_mes_seguinte' }       -> último dia útil do mês seguinte à competência
 //   { tipo: 'dia_fixo_mes_seguinte', dia: N }      -> dia N do mês seguinte à competência
 // Convênio sem regra: a previsão fica vazia para a equipe preencher.
 // A chave pode ser o nome completo ou o começo dele ("UNIMED" vale para UNIMED ...).
 const REGRAS_PREVISAO = {
-  'BRADESCO SAÚDE': { tipo: 'dias_apos_envio', dias: 60 },      // regra do Medware
-  'BRADESCO OPERADORA': { tipo: 'dias_apos_envio', dias: 65 },  // regra do Medware
+  // Bradesco: dias a partir do fechamento/envio do lote por TIPO DE GUIA (Willian 23/11);
+  // tipo fora da lista ou desconhecido = a regra antiga do Medware (dias).
+  'BRADESCO SAÚDE': { tipo: 'dias_apos_envio', dias: 60, por_tipo: { 'CONSULTA': 10, 'SADT': 45, 'HONORÁRIO': 30 } },
+  'BRADESCO OPERADORA': { tipo: 'dias_apos_envio', dias: 65, por_tipo: { 'CONSULTA': 30, 'HONORÁRIO': 45, 'SADT': 55 } },
   'UNIMED': { tipo: 'ultimo_dia_util_mes_seguinte' },
   'PETROBRÁS': { tipo: 'ultimo_dia_util_mes_seguinte' },          // Willian 23/11
   'PETROBRAS': { tipo: 'ultimo_dia_util_mes_seguinte' },
@@ -449,12 +452,15 @@ function regraPrevisao(convenio){
 }
 
 // Previsão sugerida (AAAA-MM-DD) ou null se o convênio não tem regra / faltam dados.
-function sugerirPrevisao({ convenio, data_envio, competencia }){
+// tipo = tipo de guia do lote (CONSULTA, SADT, HONORÁRIO), usado nas regras por_tipo.
+function sugerirPrevisao({ convenio, data_envio, competencia, tipo }){
   const r = regraPrevisao(convenio);
   if (!r) return null;
   if (r.tipo === 'dias_apos_envio'){
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(data_envio || ''))) return null;
-    return new Date(Date.parse(data_envio + 'T00:00:00Z') + r.dias * 864e5).toISOString().slice(0, 10);
+    const t = String(tipo || '').toUpperCase();
+    const dias = r.por_tipo && r.por_tipo[t] != null ? r.por_tipo[t] : r.dias;
+    return new Date(Date.parse(data_envio + 'T00:00:00Z') + dias * 864e5).toISOString().slice(0, 10);
   }
   if (r.tipo === 'dia_fixo_mes_seguinte'){
     if (!ehCompetencia(competencia)) return null;

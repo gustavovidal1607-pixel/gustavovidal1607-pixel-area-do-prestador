@@ -596,6 +596,11 @@ body.com-resumo{overflow:hidden;}
 .folha .folha-tabela{font-size:13px; min-width:860px;}
 .folha .folha-tabela th,.folha .folha-tabela td{padding:7px 8px;}
 .folha-tabela tr.subtotal td{background:#F3F7FB; font-weight:600;}
+.folha-tabela th.sit-txt,.folha-tabela td.sit-txt{text-align:left; min-width:200px;}
+.folha-tabela td.sit-txt{font-size:12.5px; line-height:1.35;}
+.folha-tabela td.sit-txt span{white-space:nowrap;}
+.folha-tabela td.sit-txt.pago,.folha-tabela td.sit-txt.misto span:first-child{color:#1B7F4B; font-weight:600;}
+.folha-tabela td.sit-txt.glosado{color:#B3261E; font-weight:600;}
 .folha-tabela td.conv{font-weight:700; color:var(--tinta);}
 .folha-tabela tr.novo-conv td{border-top:1.5px solid var(--linha);}
 .folha-tabela tr.novo-conv:first-child td{border-top:none;}

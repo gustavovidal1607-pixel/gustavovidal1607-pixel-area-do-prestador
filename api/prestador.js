@@ -100,13 +100,19 @@ module.exports = L.rota(async (req, res) => {
               COALESCE(sum(GREATEST(glosado, 0)), 0)::float8 AS glosado,  -- igual ao painel: glosa negativa (Unimed) não conta
               COALESCE(sum(faturado) FILTER (WHERE situacao = 'aguardando'), 0)::float8 AS a_receber,
               bool_and(situacao <> 'aguardando') AS pago,
-              to_char(max(data_pagamento), 'YYYY-MM-DD') AS data_pagamento,
-              -- até quando o prestador tem para receber: a maior previsão dos lotes do grupo
+              -- Situação do grupo (coluna "Situação" da folha): o que já foi pago (datas)
+              -- e o que está aguardando (até quando).
+              count(*) FILTER (WHERE situacao <> 'aguardando')::int AS n_pagos,
+              count(*) FILTER (WHERE situacao = 'aguardando')::int AS n_aguardando,
+              bool_and(situacao = 'glosado') AS tudo_glosado,
+              to_char(min(data_pagamento) FILTER (WHERE situacao <> 'aguardando'), 'YYYY-MM-DD') AS pago_de,
+              to_char(max(data_pagamento) FILTER (WHERE situacao <> 'aguardando'), 'YYYY-MM-DD') AS data_pagamento,
+              -- até quando o prestador tem para receber: a maior previsão das linhas aguardando
               -- (a do protocolo cadastrado pela equipe vale mais que a da planilha/regra)
               to_char(max(COALESCE((SELECT d.previsao_pagamento FROM documentos d
                  WHERE d.prestador_id = producao.prestador_id AND d.categoria = 'protocolo' AND d.excluido_em IS NULL
                    AND d.numero = producao.lote AND d.previsao_pagamento IS NOT NULL ORDER BY d.id DESC LIMIT 1),
-                 previsao_pagamento)), 'YYYY-MM-DD') AS previsao,
+                 previsao_pagamento)) FILTER (WHERE situacao = 'aguardando'), 'YYYY-MM-DD') AS previsao,
               min(to_char(data_lote, 'YYYY-MM-DD')) AS primeiro_envio,
               max(to_char(data_lote, 'YYYY-MM-DD')) AS ultimo_envio
          FROM producao WHERE prestador_id = $1 AND competencia = $2 AND ($3::text IS NULL OR ($3 = '-' AND medico IS NULL) OR medico = $3)
