@@ -28,6 +28,7 @@ import datetime as dt
 import getpass
 import http.cookiejar
 import json
+import re
 import os
 import shutil
 import sys
@@ -431,6 +432,65 @@ def ler_planilha(caminho, convenio, medico_pasta=None):
         shutil.rmtree(temp, ignore_errors=True)
 
 
+
+# SulAmérica (Willian 23/11): previsão de pagamento pelo CRONOGRAMA DE ENTREGAS E PAGAMENTOS da circular da SulAmérica
+# (um PDF por prestador em FATURAMENTO\SULAMERICA\Cronograma de envio). Cada linha: datas de entrega -> data de
+# pagamento; a de "SADT e Internação" vale para SADT, as outras para Consulta e Honorário.
+PASTA_CRONOGRAMA_SUL = "//faturasmed/Documents/FATURAMENTO/SULAMERICA/Cronograma de envio"
+_CRON_SUL = None
+
+
+def _cronograma_sul():
+    global _CRON_SUL
+    if _CRON_SUL is not None:
+        return _CRON_SUL
+    _CRON_SUL = {}
+    try:
+        import glob
+        import pdfplumber
+    except Exception:
+        return _CRON_SUL
+    for f in glob.glob(os.path.join(PASTA_CRONOGRAMA_SUL, "*Cronog*.pdf")):
+        nome = sem_acento(os.path.basename(f).split(" - Cir")[0])
+        try:
+            txt = "\n".join(pg.extract_text() or "" for pg in pdfplumber.open(f).pages)
+        except Exception:
+            continue
+        janelas = []
+        so_sadt = "CONSULTA E HONOR" not in sem_acento(txt)   # circular "S" (SADT): todas as linhas são de SADT
+        for ln in txt.split("\n"):
+            ds = re.findall(r"(\d{2})/(\d{2})/(\d{4})", ln)
+            if len(ds) < 2:
+                continue
+            try:
+                datas = [dt.date(int(a), int(m), int(d)) for d, m, a in ds if int(a) >= 2020]   # a circular tem "19/01/0202" (erro de digitação)
+            except ValueError:
+                continue
+            tipo = "SADT" if (so_sadt or "SADT" in sem_acento(ln)) else "CONSULTA"
+            janelas.append((tipo, datas[:-1], datas[-1]))
+        _CRON_SUL[nome] = janelas
+    return _CRON_SUL
+
+
+def previsao_sulamerica(prestador, tipo, data_lote):
+    """Data de pagamento pelo cronograma da SulAmérica (None se o prestador/data não estiver no cronograma)."""
+    d = data_lote if isinstance(data_lote, dt.date) else None
+    if d is None:
+        try:
+            d = dt.date.fromisoformat(str(data_lote)[:10])
+        except Exception:
+            return None
+    janelas = _cronograma_sul().get(sem_acento(prestador)) or []
+    alvo = "SADT" if "SADT" in sem_acento(tipo or "") else "CONSULTA"
+    cand = sorted((j for j in janelas if j[0] == alvo), key=lambda j: min(j[1]))
+    for _, entregas, pag in cand:            # entregue numa das datas da janela -> esse pagamento
+        if d in entregas:
+            return pag.isoformat()
+    for _, entregas, pag in cand:            # dentro do intervalo da janela
+        if min(entregas) <= d <= max(entregas):
+            return pag.isoformat()
+    return None                              # fora do cronograma (antes da circular, por ex.): sem data
+
 class Portal:
     """Conversa com o portal: sessão da equipe (cookie) ou token."""
 
@@ -531,6 +591,10 @@ def main():
                 if aba1: abas.append(aba1)
                 m = dt.datetime.fromtimestamp(os.path.getmtime(caminho)).astimezone().isoformat()
                 modificado = max(modificado or m, m)
+            if sem_acento(convenio).startswith("SULAMERICA"):
+                for l in linhas:
+                    if not l.get("previsao_pagamento"):
+                        l["previsao_pagamento"] = previsao_sulamerica(prestador, l.get("tipo"), l.get("data_lote"))
             if erro:  # não manda metade: o portal trocaria tudo do convênio pelo que leu
                 falhas += 1
                 continue
