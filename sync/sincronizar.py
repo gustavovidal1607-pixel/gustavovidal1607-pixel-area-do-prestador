@@ -287,11 +287,11 @@ def competencias_por_envio(datas):
 # Gustavo 23/11/2026: a coluna COMP da planilha MANDA quando está preenchida
 # (ele mantém as competências à mão). A regra pela data do lote só vale para
 # linha sem COMP.
-PLANILHA_MANDA_ATE = dt.date(2026, 11, 1)   # Gustavo 23/11 noite: lote enviado antes disto = COMP da planilha (bater com os resumos)
+PLANILHA_MANDA_ATE = dt.date(2026, 11, 1)   # Gustavo 23/11 noite: SÓ INTEGRADA - lote enviado antes disto = COMP da planilha (bater com os resumos)
 PLANILHA_MANDA = False   # Willian 23/11 tarde: competência pela regra da pausa / 5º dia útil (Unimed = mês de envio); COMP só quando não há data
 
 
-def aplicar_competencias(linhas, convenio=""):
+def aplicar_competencias(linhas, convenio="", planilha_antes=False):
     """Competência de cada linha. Com PLANILHA_MANDA, a coluna COMP preenchida
     prevalece; o cálculo abaixo só preenche as linhas sem COMP.
     - UNIMED (Voxis): o próprio MÊS DE ENVIO do lote (a Unimed fecha do dia 1 ao
@@ -304,9 +304,9 @@ def aplicar_competencias(linhas, convenio=""):
         if not l["comp_planilha"]:
             continue
         d = como_data(l.get("data_lote"))
-        # Gustavo 23/11 noite: o que foi enviado ANTES de PLANILHA_MANDA_ATE segue a COMP da planilha
-        # (conferida com os resumos enviados); dali pra frente, a regra do Willian.
-        if PLANILHA_MANDA or not d or d < PLANILHA_MANDA_ATE:
+        # Gustavo 23/11 noite: SÓ na INTEGRADA, o que foi enviado ANTES de PLANILHA_MANDA_ATE segue a COMP da
+        # planilha (conferida com os resumos enviados); dali pra frente, a regra do Willian.
+        if PLANILHA_MANDA or not d or (planilha_antes and d < PLANILHA_MANDA_ATE):
             l["comp"] = l["comp_planilha"]
     return detalhe
 
@@ -429,7 +429,7 @@ def ler_planilha(caminho, convenio, medico_pasta=None):
                 }
                 # Datas que vieram como texto ficam como texto; o portal entende DD/MM/AAAA.
                 linhas.append({k: (valor_json(v) if not isinstance(v, str) else v.strip()) for k, v in linha.items()})
-            detalhe = aplicar_competencias(linhas, convenio)
+            detalhe = aplicar_competencias(linhas, convenio, planilha_antes="INTEGRADA" in sem_acento(caminho))
             return linhas, avisos, aba, detalhe
         finally:
             wb.close()
