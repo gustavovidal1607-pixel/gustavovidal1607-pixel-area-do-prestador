@@ -782,7 +782,7 @@
     const ativos = prestadores.filter(p => p.ativo);
     caixa.innerHTML = `
       <div class="equipe-prest">
-        <section class="painel">
+        <section class="painel prest-coluna">
           <div class="bloco-titulo">
             <h2>Prestadores <small class="contagem" id="prest-contagem">${prestadores.length}</small></h2>
             <label class="busca"><span class="sr-only">Pesquisar prestador</span>
