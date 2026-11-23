@@ -345,13 +345,13 @@
   // ---------------------------------------------------------------- faturas
   async function telaFaturas(){
     const caixa = $('#portal');
-    if (!P.comp) P.comp = competencias()[0] || '';
-    if (!P.comp){
+    if (P.comp === null) P.comp = competencias()[0] || '';
+    if (!competencias().length){
       caixa.innerHTML = cabecalho('Faturas', '') + `<div class="painel vazio"><strong>Ainda não há faturas</strong>Elas aparecem depois da sincronização das planilhas.</div>`;
       return;
     }
     caixa.innerHTML = `
-      ${cabecalho('Faturas', 'Lotes e guias da competência, com a situação de cada procedimento.', filtros({ todas: false }))}
+      ${cabecalho('Faturas', 'Lotes e guias da competência, com a situação de cada procedimento.', filtros({ todas: true }))}
       <div class="pasta faturas-pasta">
         <div class="pasta-barra">
           <div class="pasta-resumo" id="fat-resumo"></div>
@@ -374,15 +374,24 @@
       listaFaturas();
     };
     $('#fat-busca').oninput = ev => { P.busca = ev.target.value; listaFaturas(); };
+    // "Todas": carrega competência por competência (cada uma fica no cache).
     const chave = P.comp;
+    const faltam = (chave ? [chave] : competencias()).filter(c => !P.faturas[c]);
     try {
-      if (!P.faturas[chave]) P.faturas[chave] = (await CF().api(`/api/prestador?acao=faturas&mes=${chave}${qMedico()}`)).linhas;
+      let feitas = 0;
+      await Promise.all(faltam.map(async c => {
+        P.faturas[c] = (await CF().api(`/api/prestador?acao=faturas&mes=${c}${qMedico()}`)).linhas;
+        feitas++;
+        const alvo = $('#fat-lista');
+        if (alvo && faltam.length > 1 && feitas < faltam.length) alvo.innerHTML = `<div class="carregando">Carregando ${feitas} de ${faltam.length} competências…</div>`;
+      }));
     } catch (e){ $('#fat-lista').innerHTML = `<div class="vazio"><strong>Não deu para carregar</strong>${h(e.message)}</div>`; return; }
     if (P.comp === chave) listaFaturas();
   }
 
   function listaFaturas(){
-    const todas = (P.faturas[P.comp] || []).filter(l => !P.convenio || l.convenio === P.convenio);
+    const fonte = P.comp ? (P.faturas[P.comp] || []) : competencias().flatMap(c => (P.faturas[c] || []).map(l => ({ ...l, competencia: c })));
+    const todas = fonte.filter(l => !P.convenio || l.convenio === P.convenio);
     const b = P.busca.trim().toUpperCase();
     const lista = todas.filter(l => (!P.filtroSit || l.situacao === P.filtroSit)
       && (!b || String(l.paciente || '').toUpperCase().includes(b) || String(l.guia || '').includes(b)));
@@ -398,10 +407,11 @@
     const grupos = [];
     const idx = {};
     lista.forEach(l => {
-      const k = `${l.convenio}|${l.lote || ''}`;
-      if (!idx[k]){ idx[k] = { convenio: l.convenio, lote: l.lote, data_lote: l.data_lote, linhas: [] }; grupos.push(idx[k]); }
+      const k = `${l.competencia || P.comp}|${l.convenio}|${l.lote || ''}`;
+      if (!idx[k]){ idx[k] = { competencia: l.competencia || P.comp, convenio: l.convenio, lote: l.lote, data_lote: l.data_lote, linhas: [] }; grupos.push(idx[k]); }
       idx[k].linhas.push(l);
     });
+    if (!P.comp) grupos.sort((a, b) => b.competencia.localeCompare(a.competencia));
     alvo.innerHTML = grupos.map(g => {
       const tg = somar(g.linhas.map(l => ({ faturado: l.faturado, recebido: l.recebido, glosado: Math.max(0, l.glosado || 0) })));
       const nGuias = new Set(g.linhas.map(l => l.guia)).size;
@@ -410,6 +420,7 @@
         <section class="lote">
           <header class="lote-cabeca">
             <div class="lote-id">
+              ${P.comp ? '' : `<span class="chip comp">${compBR(g.competencia)}</span>`}
               <span class="chip conv">${h(g.convenio)}</span>
               <strong>Lote ${h(g.lote || 'sem número')}</strong>
               ${g.data_lote ? `<span class="quando">${dataBR(g.data_lote)}</span>` : ''}
