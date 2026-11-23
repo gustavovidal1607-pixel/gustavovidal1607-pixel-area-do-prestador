@@ -14,7 +14,7 @@ Entrada: pelo site institucional, **Acessar sistema → Área do Prestador**, qu
 - **Painel** — filtros de competência e convênio; Faturado, Recebido, Glosado, A receber e % de glosa; gráfico mês a mês; tabela por convênio. Sem lista de próximos pagamentos.
 - **Faturas** — lotes da competência com as guias (paciente, guia, data, código, procedimento, faturado, recebido, glosado, situação, motivo da glosa). Lote ainda não pago mostra a previsão de pagamento.
 - **Protocolos** e **Repasses** — PDFs para abrir/baixar (sempre pelo servidor, nunca link público).
-- **Resumo** (aba) — folha única da competência: para cada convênio e tipo de lote, quantidade de guias, valor faturado e **previsão de pagamento** ("Pago em …" quando tudo já foi pago; "A definir" sem data), total, e "Por médico" nas clínicas com médicos. **Baixar PDF** = só a folha; **Imprimir com as capas** = folha + PDFs dos protocolos da competência, aberto numa aba para imprimir (Gustavo 23/11/2026). Montado no navegador com pdf-lib (`js/vendor/pdf-lib.min.js`). A equipe abre o mesmo resumo pelo botão Resumo do prestador.
+- **Resumo** (aba) — folha única da competência: para cada convênio e tipo de lote, quantidade de guias, valor faturado e **previsão de pagamento** ("Pago em …" quando tudo já foi pago; "A definir" sem data), total, e "Por médico" nas clínicas com médicos. **Baixar PDF** baixa a folha (sem os protocolos; Gustavo 23/11/2026 tirou o "Imprimir com as capas" — o código de anexar capas continua em baixarResumo/gerarPdfResumo, desligado). Montado no navegador com pdf-lib (`js/vendor/pdf-lib.min.js`). A equipe abre o mesmo resumo pelo botão Resumo do prestador.
 
 ## De onde vêm os números
 

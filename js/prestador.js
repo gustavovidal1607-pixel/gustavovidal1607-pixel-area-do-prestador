@@ -673,7 +673,6 @@
         </label>
         ${seletorMedico('f-med')}
         <button type="button" class="botao primario" id="btn-baixar-resumo" disabled>Baixar PDF</button>
-        <button type="button" class="botao secundario" id="btn-imprimir-resumo" disabled title="Abre o resumo com as capas dos protocolos para imprimir">Imprimir com as capas</button>
       </div>`)}
       <div class="resumo-aba"><article class="folha" id="folha"><div class="carregando">Carregando…</div></article></div>
       <p class="resumo-status" id="r-status" aria-live="polite"></p>`;
@@ -685,10 +684,9 @@
     catch (e){ $('#folha').innerHTML = `<div class="vazio"><strong>Não deu para carregar</strong>${h(e.message)}</div>`; return; }
     if (P.comp !== comp || P.aba !== 'resumo') return;
     $('#folha').innerHTML = htmlFolha(r, P.medico);
-    const b = $('#btn-baixar-resumo'), bi = $('#btn-imprimir-resumo');
-    b.disabled = false; bi.disabled = false;
+    const b = $('#btn-baixar-resumo');
+    b.disabled = false;
     b.onclick = () => baixarResumo(r, P.medico, b, $('#r-status'));
-    bi.onclick = () => baixarResumo(r, P.medico, bi, $('#r-status'), { capas: true, abrir: true });
   }
 
   // Equipe: resumo de um prestador numa tela por cima (com competência e médico).
@@ -718,7 +716,6 @@
         </label>` : ''}
         <div class="resumo-botoes">
           <button type="button" class="botao primario" id="r-baixar">Baixar PDF</button>
-          <button type="button" class="botao secundario" id="r-imprimir">Imprimir com as capas</button>
           <button type="button" class="botao fantasma" id="r-fechar">Fechar</button>
         </div>
         <p class="resumo-status" id="r-status" aria-live="polite"></p>
@@ -727,7 +724,6 @@
     const botao = $('#r-baixar');
     $('#r-fechar').onclick = fecharResumo;
     botao.onclick = () => baixarResumo(r, medico, botao, $('#r-status'));
-    $('#r-imprimir').onclick = () => baixarResumo(r, medico, $('#r-imprimir'), $('#r-status'), { capas: true, abrir: true, prestadorId });
     $('#r-comp').onchange = ev => abrirResumo(ev.target.value, prestadorId, false, medico);
     if ($('#r-med')) $('#r-med').onchange = ev => abrirResumo(comp, prestadorId, false, ev.target.value);
     tela.scrollTop = 0;
