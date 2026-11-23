@@ -70,15 +70,15 @@
 
   // Médico dentro da clínica (Azul, CAEM…): '' = tudo junto, '-' = sem médico, NOME = só ele.
   const qMedico = () => P.medico ? `&medico=${encodeURIComponent(P.medico)}` : '';
-  const nomeMedico = m => m === '-' ? 'Sem médico informado' : (m || 'Todos os médicos');
+  const nomeMedico = m => m === '-' ? 'Sem executante informado' : (m || 'Todos os executantes');
   function seletorMedico(id){
     if (!P.medicos.length) return '';
     return `
-        <label class="campo"><span>Médico</span>
+        <label class="campo"><span>Executante</span>
           <select id="${id}">
             <option value="" ${P.medico === '' ? 'selected' : ''}>Todos (clínica inteira)</option>
             ${P.medicos.map(m => `<option value="${h(m)}" ${m === P.medico ? 'selected' : ''}>${h(m)}</option>`).join('')}
-            ${P.semMedico ? `<option value="-" ${P.medico === '-' ? 'selected' : ''}>Sem médico informado</option>` : ''}
+            ${P.semMedico ? `<option value="-" ${P.medico === '-' ? 'selected' : ''}>Sem executante informado</option>` : ''}
           </select>
         </label>`;
   }
@@ -630,7 +630,7 @@
           <div class="folha-titulo">
             <h1>Resumo mensal de faturamento</h1>
             <p><span>Prestador</span><strong>${h(r.prestador.nome)}</strong></p>
-            ${medico ? `<p><span>Médico</span><strong>${h(nomeMedico(medico))}</strong></p>` : ''}
+            ${medico ? `<p><span>Executante</span><strong>${h(nomeMedico(medico))}</strong></p>` : ''}
             <p><span>Mês</span><strong>${h(compNome(r.mes))}</strong></p>
           </div>
         </header>
@@ -654,8 +654,8 @@
           <h2>Por médico</h2>
           <div class="folha-rolagem">
           <table class="folha-tabela">
-            <thead><tr><th>Médico</th>${cabValores}</tr></thead>
-            <tbody>${r.por_medico.map(g => `<tr><td>${h(g.medico || 'Sem médico informado')}</td>${valores(g)}</tr>`).join('')}</tbody>
+            <thead><tr><th>Executante</th>${cabValores}</tr></thead>
+            <tbody>${r.por_medico.map(g => `<tr><td>${h(g.medico || 'Sem executante informado')}</td>${valores(g)}</tr>`).join('')}</tbody>
           </table>
           </div>
         </section>` : ''}
@@ -753,11 +753,11 @@
           <select id="r-comp">${comps.map(c => `<option value="${c}" ${c === comp ? 'selected' : ''}>${compBR(c)}</option>`).join('')}</select>
         </label>
         ${r.medicos && r.medicos.length ? `
-        <label class="campo"><span>Médico</span>
+        <label class="campo"><span>Executante</span>
           <select id="r-med">
             <option value="" ${!medico ? 'selected' : ''}>Todos (clínica inteira)</option>
             ${r.medicos.map(m => `<option value="${h(m)}" ${m === medico ? 'selected' : ''}>${h(m)}</option>`).join('')}
-            ${r.sem_medico ? `<option value="-" ${medico === '-' ? 'selected' : ''}>Sem médico informado</option>` : ''}
+            ${r.sem_medico ? `<option value="-" ${medico === '-' ? 'selected' : ''}>Sem executante informado</option>` : ''}
           </select>
         </label>` : ''}
         <div class="resumo-botoes">
@@ -950,7 +950,7 @@
       cabecalhoTabela('MÉDICO', false, false);
       for (const g of r.por_medico){
         if (y - 18 < 70){ novaPagina(false); cabecalhoTabela('MÉDICO', false, false); }
-        texto(caber(g.medico || 'Sem médico informado', fonte, 9, COLS[0].x - xConv - 40), xConv, y, { tam: 9 });
+        texto(caber(g.medico || 'Sem executante informado', fonte, 9, COLS[0].x - xConv - 40), xConv, y, { tam: 9 });
         valoresLinha(g);
         y -= 6; pagina.drawLine({ start: { x: M, y }, end: { x: W - M, y }, thickness: 0.5, color: LINHA }); y -= 13;
       }
@@ -1273,7 +1273,7 @@
           <h2>Editar ${d.categoria === 'protocolo' ? 'protocolo' : 'documento'}</h2>
           <p>${h(d.nome_original)}</p>
           <label class="campo"><span>Convênio</span><select name="convenio"><option value="">—</option>${convs.map(c => `<option ${c === d.convenio ? 'selected' : ''}>${h(c)}</option>`).join('')}</select></label>
-          ${medicosDoc.length ? `<label class="campo"><span>Médico</span><select name="medico"><option value="">Clínica inteira</option>${medicosDoc.map(m => `<option ${m === d.medico ? 'selected' : ''}>${h(m)}</option>`).join('')}</select></label>` : ''}
+          ${medicosDoc.length ? `<label class="campo"><span>Executante</span><select name="medico"><option value="">Clínica inteira</option>${medicosDoc.map(m => `<option ${m === d.medico ? 'selected' : ''}>${h(m)}</option>`).join('')}</select></label>` : ''}
           ${d.categoria === 'protocolo' ? `
             <label class="campo"><span>Número do protocolo</span><input name="numero" value="${h(d.numero)}"></label>
             <label class="campo"><span>Data de envio</span><input name="data_envio" type="date" value="${h(d.data_envio || '')}"></label>

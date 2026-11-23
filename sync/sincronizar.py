@@ -112,6 +112,9 @@ CORTES_COMPETENCIA = {
 }
 DIA_UTIL_LIMITE = 5
 
+# Executante das linhas sem médico na planilha (Willian 23/11: Centrus aparece como CENTRUS, não "sem médico informado").
+EXECUTANTE_PADRAO = {"CENTRUS": "CENTRUS"}
+
 
 def sem_acento(texto):
     """'Motivo de  glosa' -> 'MOTIVO DE GLOSA' (sem acento, um espaço)."""
@@ -588,7 +591,7 @@ def main():
             linhas, avisos, detalhe, abas, modificado, erro = [], [], [], [], None, False
             for caminho, medico_pasta in caminhos:
                 try:
-                    l1, a1, aba1, d1 = ler_planilha(caminho, convenio, medico_pasta)
+                    l1, a1, aba1, d1 = ler_planilha(caminho, convenio, medico_pasta or EXECUTANTE_PADRAO.get(prestador))
                 except Exception as e:  # planilha aberta/corrompida: segue com as outras
                     print(f"  ! {convenio}: não consegui ler {os.path.basename(caminho)} ({e})", file=sys.stderr)
                     erro = True
