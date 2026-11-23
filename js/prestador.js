@@ -784,7 +784,7 @@
       <div class="equipe-prest">
         <section class="painel">
           <h2>Prestadores</h2>
-          <p class="sub">Médicos e clínicas com acesso ao portal. O nome é o mesmo da pasta das planilhas em CONTROLE DE PAGAMENTO. O login do prestador se cria em <b>Clínicas e acessos</b>.</p>
+          <p class="sub">Médicos e clínicas com acesso ao portal. O nome é o mesmo da pasta das planilhas em CONTROLE DE PAGAMENTO. O login do prestador se cria em <b>Acessos</b>.</p>
           <ul class="lista-simples prestadores">
             ${prestadores.length ? prestadores.map(p => `
               <li class="${p.ativo ? '' : 'inativo'}">

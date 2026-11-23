@@ -683,3 +683,6 @@ body.com-resumo{overflow:hidden;}
 .tabela-proximos thead th:nth-child(2),.tabela-proximos thead th:nth-child(3),.tabela-proximos thead th:nth-child(4){text-align:left;}
 .tabela-proximos tr.atrasado th{color:var(--erro);}
 #proximos-todos{margin-top:8px;}
+
+/* Acessos (Área do Prestador): um painel só, largura confortável */
+.acessos.acessos-um{grid-template-columns:minmax(320px, 820px);}
