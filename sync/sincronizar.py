@@ -287,6 +287,7 @@ def competencias_por_envio(datas):
 # Gustavo 23/11/2026: a coluna COMP da planilha MANDA quando está preenchida
 # (ele mantém as competências à mão). A regra pela data do lote só vale para
 # linha sem COMP.
+PLANILHA_MANDA_ATE = dt.date(2026, 11, 1)   # Gustavo 23/11 noite: lote enviado antes disto = COMP da planilha (bater com os resumos)
 PLANILHA_MANDA = False   # Willian 23/11 tarde: competência pela regra da pausa / 5º dia útil (Unimed = mês de envio); COMP só quando não há data
 
 
@@ -299,10 +300,14 @@ def aplicar_competencias(linhas, convenio=""):
     - Demais convênios: regra da pausa / 5º dia útil (competencias_por_envio)
       sobre as datas do lote; sem data (ou dia 01, que é só marcador): coluna COMP."""
     detalhe = _competencias_pela_data(linhas, convenio)
-    if PLANILHA_MANDA:
-        for l in linhas:
-            if l["comp_planilha"]:
-                l["comp"] = l["comp_planilha"]
+    for l in linhas:
+        if not l["comp_planilha"]:
+            continue
+        d = como_data(l.get("data_lote"))
+        # Gustavo 23/11 noite: o que foi enviado ANTES de PLANILHA_MANDA_ATE segue a COMP da planilha
+        # (conferida com os resumos enviados); dali pra frente, a regra do Willian.
+        if PLANILHA_MANDA or not d or d < PLANILHA_MANDA_ATE:
+            l["comp"] = l["comp_planilha"]
     return detalhe
 
 
