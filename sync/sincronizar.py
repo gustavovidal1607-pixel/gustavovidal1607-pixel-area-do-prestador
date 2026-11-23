@@ -64,6 +64,7 @@ PRESTADORES = [
 # CAEM na Petrobras fatura como pessoa física; a Azul tem uma pasta por médico na Unimed.
 PASTAS_EXTRAS = {
     "CAEM": {"CLAUDIO LUIZ LOURENÇO": "CLAUDIO LUIZ LOURENÇO"},
+    "CENTRUS": {"FERNANDO LINHARES": "FERNANDO LINHARES"},   # Willian 23/11: mesmo prestador, produção junto na Centrus
     "AZUL OFTALMOLOGIA": {"ERICK MARCET - AZUL OFTALMOLOGIA": "ERICK MARCET",
                           "RACHEL CAMARGO - AZUL OFTALMOLOGIA": "RACHEL CAMARGO"},
 }
