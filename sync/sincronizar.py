@@ -253,6 +253,11 @@ def competencias_por_envio(datas):
         elif ds[-1] <= quinto:
             grupos = [(ds, ant)]
             motivo = f"todos até o 5º dia útil ({quinto:%d/%m})"
+        elif ds[0] <= quinto:
+            # Willian 23/11: sem pausa, o que foi enviado até o 5º dia útil é da competência anterior
+            ate = [d for d in ds if d <= quinto]
+            grupos = [(ate, ant), ([d for d in ds if d > quinto], vig)]
+            motivo = f"até o 5º dia útil ({quinto:%d/%m}) -> anterior; depois -> vigente"
         else:
             grupos = [(ds, vig)]
             motivo = f"sem pausa >= {PAUSA_MINIMA_DIAS} dias e envios depois do 5º dia útil ({quinto:%d/%m})" if gaps else f"envio depois do 5º dia útil ({quinto:%d/%m})"
@@ -266,7 +271,7 @@ def competencias_por_envio(datas):
 # Gustavo 23/11/2026: a coluna COMP da planilha MANDA quando está preenchida
 # (ele mantém as competências à mão). A regra pela data do lote só vale para
 # linha sem COMP.
-PLANILHA_MANDA = True
+PLANILHA_MANDA = False   # Willian 23/11 tarde: competência pela regra da pausa / 5º dia útil (Unimed = mês de envio); COMP só quando não há data
 
 
 def aplicar_competencias(linhas, convenio=""):
