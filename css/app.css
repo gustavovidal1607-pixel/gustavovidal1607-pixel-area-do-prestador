@@ -591,6 +591,16 @@ body.com-resumo{overflow:hidden;}
 .folha-total strong{font:600 22px var(--fonte-num);}
 .folha-rodape{margin-top:28px; padding-top:10px; border-top:1px solid var(--linha); font-size:11px; color:var(--cinza-claro); text-align:center;}
 .folha-vazio{color:var(--cinza); text-align:center; padding:30px;}
+/* folha do resumo mensal: convênio | tipo do lote | qtd | valor | previsão */
+.folha-tabela td.conv{font-weight:700; color:var(--tinta);}
+.folha-tabela tr.novo-conv td{border-top:1.5px solid var(--linha);}
+.folha-tabela tr.novo-conv:first-child td{border-top:none;}
+.folha-tabela th.prev,.folha-tabela td.prev{text-align:right; white-space:nowrap; font-family:var(--fonte-num); font-variant-numeric:tabular-nums;}
+.folha-tabela td.prev.pago{color:#1B7F4B; font-weight:600;}
+.folha-nota{margin:18px 0 0; font-size:12px; color:var(--cinza);}
+.resumo-aba{margin-top:6px;}
+.resumo-aba .folha{box-shadow:var(--sombra); max-width:900px; margin:0 auto;}
+.resumo-status{text-align:center; color:var(--cinza); font-size:13px; min-height:18px;}
 
 @media print{
   @page{size:A4; margin:14mm;}

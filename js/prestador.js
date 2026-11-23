@@ -52,6 +52,7 @@
       }
     } catch (e){ $('#portal').innerHTML = `<div class="vazio"><strong>Não deu para carregar</strong>${h(e.message)}</div>`; return; }
     if (aba === 'faturas') return telaFaturas();
+    if (aba === 'resumo') return telaResumo();
     if (aba === 'protocolos') return telaDocumentos('protocolo');
     if (aba === 'repasses') return telaDocumentos('repasse');
     return telaPainel();
@@ -103,7 +104,7 @@
           </select>
         </label>
         ${seletorMedico('f-med')}
-        ${resumo ? `<button type="button" class="botao primario" id="btn-resumo">Gerar resumo</button>` : ''}
+        ${resumo ? `<button type="button" class="botao primario" id="btn-resumo">Ver resumo</button>` : ''}
       </div>`;
   }
 
@@ -113,7 +114,7 @@
     const fm = $('#f-med');
     if (fm) fm.onchange = ev => trocarMedico(ev.target.value);
     const b = $('#btn-resumo');
-    if (b) b.onclick = () => abrirResumo(P.comp || competencias()[0], undefined, true, P.medico);
+    if (b) b.onclick = () => { if (!P.comp) P.comp = competencias()[0]; CF().irParaAba('resumo'); };
   }
 
   function cabecalho(titulo, sub, extra){
@@ -570,30 +571,138 @@
       </li>`;
   }
 
-  // ---------------------------------------------------------------- resumo de faturamento (PDF único: resumo + protocolos)
-  // "Gerar resumo" mostra a prévia e já baixa
-  // "RESUMO <MM-AAAA> - <PRESTADOR>.pdf": página(s) do resumo + todos os PDFs
-  // de protocolo da competência (ordem convênio -> data de envio), montado no
-  // navegador com pdf-lib (js/vendor/pdf-lib.min.js, carregado só aqui).
+  // ---------------------------------------------------------------- resumo mensal de faturamento
+  // Folha única da competência: para cada convênio e tipo de lote, quantidade
+  // de guias, valor faturado e previsão de pagamento (até quando o prestador
+  // tem para receber), com o total. Sem os protocolos dos portais (Gustavo 23/11).
+  // O prestador vê na aba "Resumo"; a equipe abre pelo botão "Resumo" do prestador.
+  const previsaoTexto = g => g.pago ? (g.data_pagamento ? `Pago em ${dataBR(g.data_pagamento)}` : 'Pago')
+    : g.previsao ? dataBR(g.previsao) : 'A definir';
+  const RODAPE_EMPRESA = 'Faturas Med · Avenida Rui Barbosa, 1011, Sl 205 e 206, Centro – Macaé/RJ · www.faturasmed.com.br · (22) 2213-0101 · WhatsApp (22) 99877-5196';
+
+  function htmlFolha(r, medico){
+    const total = somaResumo(r.grupos);
+    const gerado = new Date(r.gerado_em);
+    let convAnterior = null;
+    return `
+        <header class="folha-cabeca">
+          <img src="img/logo.svg" alt="Faturas Med" class="folha-logo">
+          <div class="folha-titulo">
+            <h1>Resumo mensal de faturamento</h1>
+            <p><span>Prestador</span><strong>${h(r.prestador.nome)}</strong></p>
+            ${medico ? `<p><span>Médico</span><strong>${h(nomeMedico(medico))}</strong></p>` : ''}
+            <p><span>Mês</span><strong>${h(compNome(r.mes))}</strong></p>
+          </div>
+        </header>
+        ${r.grupos.length ? `
+        <table class="folha-tabela">
+          <thead><tr><th>Convênio</th><th>Tipo do lote</th><th class="n">Qtd</th><th class="n">Valor</th><th class="prev">Previsão de pagamento</th></tr></thead>
+          <tbody>${r.grupos.map(g => {
+            const primeira = g.convenio !== convAnterior; convAnterior = g.convenio;
+            return `<tr class="${primeira ? 'novo-conv' : ''}">
+              <td class="conv">${primeira ? h(g.convenio) : ''}</td>
+              <td>${h(tipoNome(g.tipo))}</td>
+              <td class="n">${g.guias}</td>
+              <td class="n">${dinheiro(g.faturado)}</td>
+              <td class="prev ${g.pago ? 'pago' : ''}">${h(previsaoTexto(g))}</td>
+            </tr>`; }).join('')}</tbody>
+          <tfoot><tr><td colspan="2">Total</td><td class="n">${total.guias}</td><td class="n">${dinheiro(total.faturado)}</td><td></td></tr></tfoot>
+        </table>` : `<p class="folha-vazio">Nada faturado nesta competência.</p>`}
+        ${r.por_medico && r.por_medico.length > 1 ? `
+        <section class="folha-conv">
+          <h2>Por médico</h2>
+          <table>
+            <thead><tr><th>Médico</th><th class="n">Qtd</th><th class="n">Valor</th></tr></thead>
+            <tbody>${r.por_medico.map(g => `<tr><td>${h(g.medico || 'Sem médico informado')}</td><td class="n">${g.guias}</td><td class="n">${dinheiro(g.faturado)}</td></tr>`).join('')}</tbody>
+          </table>
+        </section>` : ''}
+        <div class="folha-total">
+          <span>Total faturado · ${total.guias} guia${total.guias === 1 ? '' : 's'}</span>
+          <strong>${dinheiro(total.faturado)}</strong>
+        </div>
+        <p class="folha-nota">Previsão de pagamento = até quando cada convênio tem para pagar o que foi enviado. "A definir" = o convênio ainda não informou a data.</p>
+        <footer class="folha-rodape">${h(RODAPE_EMPRESA)}<br>gerado em ${h(CF().quandoBR(gerado))}</footer>`;
+  }
+
+  // capas = anexa os PDFs dos protocolos da competência (só quando o prestador
+  // pede para imprimir); abrir = abre numa aba para imprimir em vez de baixar.
+  async function baixarResumo(r, medico, botao, status, { capas = false, abrir = false, prestadorId = null } = {}){
+    if (botao) botao.disabled = true;
+    const aviso = t => { if (status) status.textContent = t; };
+    try {
+      let protocolos = [];
+      if (capas){
+        aviso('Buscando os protocolos…');
+        const q = (prestadorId ? `&prestador=${prestadorId}` : '') + (medico ? `&medico=${encodeURIComponent(medico)}` : '');
+        const docs = await CF().api(`/api/documentos?acao=lista&categoria=protocolo${q}`);
+        protocolos = docs.documentos.filter(d => d.competencia === r.mes && (!prestadorId || d.prestador_id === prestadorId)).sort(ordemProtocolo);
+      }
+      const { bytes, paginas, falhas } = await gerarPdfResumo(r, aviso, protocolos);
+      const nome = `RESUMO ${compBR(r.mes).replace('/', '-')} - ${r.prestador.nome}${medico && medico !== '-' ? ' - ' + medico : ''}${capas ? ' - COM CAPAS' : ''}.pdf`;
+      const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+      let aberto = null;
+      if (abrir) aberto = window.open(url, '_blank');
+      if (!aberto){
+        const a = document.createElement('a');
+        a.href = url; a.download = nome;
+        document.body.appendChild(a); a.click(); a.remove();
+      }
+      setTimeout(() => URL.revokeObjectURL(url), 120000);
+      aviso(`Pronto: ${nome} (${paginas} página${paginas === 1 ? '' : 's'})${capas && !protocolos.length ? ' — nenhum protocolo anexado nesta competência' : ''}${falhas && falhas.length ? ` — não deu para anexar: ${falhas.join(', ')}` : ''}`);
+    } catch (e){
+      console.error(e);
+      if (status) status.textContent = '';
+      CF().aviso(e.message || 'Não deu para gerar o PDF.', true);
+    } finally { if (botao) botao.disabled = false; }
+  }
+
+  // Aba "Resumo" do prestador.
+  async function telaResumo(){
+    const caixa = $('#portal');
+    const comps = competencias();
+    if (!comps.length){
+      caixa.innerHTML = cabecalho('Resumo de faturamento', '') + `<div class="painel vazio"><strong>Ainda não há faturamento aqui</strong>O resumo aparece depois da sincronização das planilhas.</div>`;
+      return;
+    }
+    if (!P.comp || !comps.includes(P.comp)) P.comp = comps[0];
+    caixa.innerHTML = `
+      ${cabecalho('Resumo de faturamento', 'O que foi faturado no mês, por convênio e tipo de lote, e até quando cada um tem para pagar.', `
+      <div class="filtros-portal">
+        <label class="campo"><span>Competência</span>
+          <select id="f-comp">${comps.map(c => `<option value="${c}" ${c === P.comp ? 'selected' : ''}>${compBR(c)}</option>`).join('')}</select>
+        </label>
+        ${seletorMedico('f-med')}
+        <button type="button" class="botao primario" id="btn-baixar-resumo" disabled>Baixar PDF</button>
+        <button type="button" class="botao secundario" id="btn-imprimir-resumo" disabled title="Abre o resumo com as capas dos protocolos para imprimir">Imprimir com as capas</button>
+      </div>`)}
+      <div class="resumo-aba"><article class="folha" id="folha"><div class="carregando">Carregando…</div></article></div>
+      <p class="resumo-status" id="r-status" aria-live="polite"></p>`;
+    $('#f-comp').onchange = ev => { P.comp = ev.target.value; telaResumo(); };
+    const fm = $('#f-med'); if (fm) fm.onchange = ev => trocarMedico(ev.target.value);
+    const comp = P.comp;
+    let r;
+    try { r = await CF().api(`/api/prestador?acao=resumo&mes=${comp}${qMedico()}`); }
+    catch (e){ $('#folha').innerHTML = `<div class="vazio"><strong>Não deu para carregar</strong>${h(e.message)}</div>`; return; }
+    if (P.comp !== comp || P.aba !== 'resumo') return;
+    $('#folha').innerHTML = htmlFolha(r, P.medico);
+    const b = $('#btn-baixar-resumo'), bi = $('#btn-imprimir-resumo');
+    b.disabled = false; bi.disabled = false;
+    b.onclick = () => baixarResumo(r, P.medico, b, $('#r-status'));
+    bi.onclick = () => baixarResumo(r, P.medico, bi, $('#r-status'), { capas: true, abrir: true });
+  }
+
+  // Equipe: resumo de um prestador numa tela por cima (com competência e médico).
   async function abrirResumo(comp, prestadorId, baixar = true, medico = ''){
     const tela = $('#resumo');
     const comps = P && P.painel && !prestadorId ? competencias() : [comp];
     tela.hidden = false;
     document.body.classList.add('com-resumo');
     tela.innerHTML = `<div class="resumo-barra"><span>Carregando o resumo…</span></div>`;
-    let r, protocolos;
+    let r;
     try {
       const q = (prestadorId ? `&prestador=${prestadorId}` : '') + (medico ? `&medico=${encodeURIComponent(medico)}` : '');
-      const [res, docs] = await Promise.all([
-        CF().api(`/api/prestador?acao=resumo&mes=${comp}${q}`),
-        CF().api(`/api/documentos?acao=lista&categoria=protocolo${q}`),
-      ]);
-      r = res;
-      protocolos = docs.documentos.filter(d => d.competencia === comp && (!prestadorId || d.prestador_id === prestadorId)).sort(ordemProtocolo);
+      r = await CF().api(`/api/prestador?acao=resumo&mes=${comp}${q}`);
     } catch (e){ CF().aviso(e.message, true); fecharResumo(); return; }
-    const porConv = agruparResumo(r.grupos);
-    const total = somaResumo(r.grupos);
-    const gerado = new Date(r.gerado_em);
     tela.innerHTML = `
       <div class="resumo-barra nao-imprimir">
         <label class="campo"><span>Competência</span>
@@ -609,72 +718,21 @@
         </label>` : ''}
         <div class="resumo-botoes">
           <button type="button" class="botao primario" id="r-baixar">Baixar PDF</button>
+          <button type="button" class="botao secundario" id="r-imprimir">Imprimir com as capas</button>
           <button type="button" class="botao fantasma" id="r-fechar">Fechar</button>
         </div>
         <p class="resumo-status" id="r-status" aria-live="polite"></p>
       </div>
-      <article class="folha" id="folha">
-        <header class="folha-cabeca">
-          <img src="img/logo.svg" alt="Faturas Med" class="folha-logo">
-          <div class="folha-titulo">
-            <h1>Resumo de faturamento</h1>
-            <p><span>Prestador</span><strong>${h(r.prestador.nome)}</strong></p>
-            ${medico ? `<p><span>Médico</span><strong>${h(nomeMedico(medico))}</strong></p>` : ''}
-            <p><span>Competência</span><strong>${compBR(r.mes)}</strong></p>
-          </div>
-        </header>
-        ${r.grupos.length ? porConv.map(([c, gs]) => {
-          const st = somaResumo(gs);
-          return `
-            <section class="folha-conv">
-              <h2>${h(c)}</h2>
-              <table>
-                <thead><tr><th>Tipo de guia</th><th class="n">Guias</th><th class="n">Valor faturado</th></tr></thead>
-                <tbody>${gs.map(g => `<tr><td>${h(tipoNome(g.tipo))}</td><td class="n">${g.guias}</td><td class="n">${dinheiro(g.faturado)}</td></tr>`).join('')}</tbody>
-                <tfoot><tr><td>Total ${h(c)}</td><td class="n">${st.guias}</td><td class="n">${dinheiro(st.faturado)}</td></tr></tfoot>
-              </table>
-            </section>`;
-        }).join('') : `<p class="folha-vazio">Nada faturado nesta competência.</p>`}
-        ${r.por_medico && r.por_medico.length > 1 ? `
-            <section class="folha-conv">
-              <h2>Por médico</h2>
-              <table>
-                <thead><tr><th>Médico</th><th class="n">Guias</th><th class="n">Valor faturado</th></tr></thead>
-                <tbody>${r.por_medico.map(g => `<tr><td>${h(g.medico || 'Sem médico informado')}</td><td class="n">${g.guias}</td><td class="n">${dinheiro(g.faturado)}</td></tr>`).join('')}</tbody>
-              </table>
-            </section>` : ''}
-        <div class="folha-total">
-          <span>Total geral · ${total.guias} guia${total.guias === 1 ? '' : 's'}</span>
-          <strong>${dinheiro(total.faturado)}</strong>
-        </div>
-        <footer class="folha-rodape">Faturas Med · Faturamento Médico e Hospitalar · gerado em ${h(CF().quandoBR(gerado))}</footer>
-      </article>`;
-    const status = $('#r-status');
+      <article class="folha" id="folha">${htmlFolha(r, medico)}</article>`;
     const botao = $('#r-baixar');
-    const gerar = async () => {
-      botao.disabled = true;
-      try {
-        const { bytes, paginas, falhas } = await gerarPdfResumo(r, protocolos, t => { status.textContent = t; });
-        const nome = `RESUMO ${compBR(r.mes).replace('/', '-')} - ${r.prestador.nome}${medico && medico !== '-' ? ' - ' + medico : ''}.pdf`;
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
-        a.download = nome;
-        document.body.appendChild(a); a.click(); a.remove();
-        setTimeout(() => URL.revokeObjectURL(a.href), 60000);
-        status.textContent = `Pronto: ${nome} (${paginas} página${paginas === 1 ? '' : 's'})${falhas.length ? ` — não deu para anexar: ${falhas.join(', ')}` : ''}`;
-      } catch (e){
-        console.error(e);
-        status.textContent = '';
-        CF().aviso(e.message || 'Não deu para gerar o PDF.', true);
-      } finally { botao.disabled = false; }
-    };
     $('#r-fechar').onclick = fecharResumo;
-    botao.onclick = gerar;
+    botao.onclick = () => baixarResumo(r, medico, botao, $('#r-status'));
+    $('#r-imprimir').onclick = () => baixarResumo(r, medico, $('#r-imprimir'), $('#r-status'), { capas: true, abrir: true, prestadorId });
     $('#r-comp').onchange = ev => abrirResumo(ev.target.value, prestadorId, false, medico);
     if ($('#r-med')) $('#r-med').onchange = ev => abrirResumo(comp, prestadorId, false, ev.target.value);
     tela.scrollTop = 0;
     botao.focus();
-    if (baixar) gerar();
+    if (baixar) baixarResumo(r, medico, botao, $('#r-status'));
   }
 
   const ordemProtocolo = (a, b) => (a.convenio || '').localeCompare(b.convenio || '', 'pt-BR')
@@ -720,34 +778,21 @@
     } finally { URL.revokeObjectURL(url); }
   }
 
-  async function gerarPdfResumo(r, protocolos, aviso){
+  async function gerarPdfResumo(r, aviso, protocolos = []){
     aviso('Preparando o PDF…');
     await carregarPdfLib();
     const { PDFDocument, StandardFonts, rgb } = window.PDFLib;
     const doc = await PDFDocument.create();
     const medicoPdf = r.medico ? nomeMedico(r.medico) : '';
-    doc.setTitle(`Resumo de faturamento ${compBR(r.mes)} - ${r.prestador.nome}${medicoPdf ? ' - ' + medicoPdf : ''}`);
+    doc.setTitle(`Resumo mensal de faturamento ${compBR(r.mes)} - ${r.prestador.nome}${medicoPdf ? ' - ' + medicoPdf : ''}`);
     doc.setAuthor('Faturas Med');
     const fonte = await doc.embedFont(StandardFonts.Helvetica);
     const negrito = await doc.embedFont(StandardFonts.HelveticaBold);
     let logo = null;
     try { logo = await doc.embedPng(await logoPng()); } catch (e){ console.warn('logo', e); }
 
-    // Busca os protocolos antes de desenhar (para marcar os que falharem).
-    const anexos = [], falhas = [];
-    for (let i = 0; i < protocolos.length; i++){
-      const d = protocolos[i];
-      aviso(`Anexando protocolo ${i + 1} de ${protocolos.length}…`);
-      try {
-        const resp = await fetch(`/api/documentos?id=${d.id}`, { credentials: 'same-origin' });
-        if (!resp.ok) throw new Error(String(resp.status));
-        anexos.push({ d, pdf: await PDFDocument.load(await resp.arrayBuffer(), { ignoreEncryption: true }) });
-      } catch (e){ console.error('protocolo', d.id, e); falhas.push(d.numero); }
-    }
-
     const cor = hex => rgb(parseInt(hex.slice(1, 3), 16) / 255, parseInt(hex.slice(3, 5), 16) / 255, parseInt(hex.slice(5, 7), 16) / 255);
-    const AZUL = cor('#0B60B5'), TINTA = cor('#0D2440'), CINZA = cor('#5E6772'), CLARO = cor('#E7F0FA'), LINHA = cor('#D5DFEA'), FINA = cor('#EBF0F5');
-    // Helvetica padrão só tem os caracteres do Latin-1 (acentos do português ok).
+    const AZUL = cor('#0B60B5'), TINTA = cor('#0D2440'), CINZA = cor('#5E6772'), CLARO = cor('#E7F0FA'), LINHA = cor('#D5DFEA'), FINA = cor('#EBF0F5'), VERDE = cor('#1B7F4B');
     const t = s => String(s ?? '').replace(/[^\x20-\x7E\xA0-\xFF–—•…‘’“”]/g, '?');
     const W = 595.28, H = 841.89, M = 48;
     const larg = (s, f, tam) => f.widthOfTextAtSize(t(s), tam);
@@ -756,57 +801,68 @@
       const w = larg(s, f, tam);
       pagina.drawText(t(s), { x: alinhar === 'dir' ? x - w : alinhar === 'centro' ? x - w / 2 : x, y: yy, size: tam, font: f, color: c });
     };
-    const rodape = () => texto(`Faturas Med · Faturamento Médico e Hospitalar · gerado em ${CF().quandoBR(new Date(r.gerado_em))}`, W / 2, 28, { tam: 7.5, c: CINZA, alinhar: 'centro' });
+    const rodape = () => {
+      texto(RODAPE_EMPRESA, W / 2, 36, { tam: 7.5, c: CINZA, alinhar: 'centro' });
+      texto(`gerado em ${CF().quandoBR(new Date(r.gerado_em))}`, W / 2, 25, { tam: 7, c: CINZA, alinhar: 'centro' });
+    };
     const novaPagina = (primeira) => {
       pagina = doc.addPage([W, H]);
       y = H - M;
       if (primeira){
         if (logo){ const lw = 170, lh = lw * logo.height / logo.width; pagina.drawImage(logo, { x: M, y: y - lh, width: lw, height: lh }); }
-        texto('RESUMO DE FATURAMENTO', W - M, y - 14, { f: negrito, tam: 15, c: AZUL, alinhar: 'dir' });
+        texto('RESUMO MENSAL DE FATURAMENTO', W - M, y - 14, { f: negrito, tam: 14, c: AZUL, alinhar: 'dir' });
         const linhaCab = (rot, val, yy) => {
           const wv = larg(val, negrito, 10.5);
           texto(val, W - M, yy, { f: negrito, tam: 10.5, alinhar: 'dir' });
           texto(rot, W - M - wv - 8, yy, { tam: 8, c: CINZA, alinhar: 'dir' });
         };
         linhaCab('PRESTADOR', r.prestador.nome, y - 32);
-        if (medicoPdf){ linhaCab('MÉDICO', medicoPdf, y - 47); linhaCab('COMPETÊNCIA', compBR(r.mes), y - 62); y -= 77; }
-        else { linhaCab('COMPETÊNCIA', compBR(r.mes), y - 47); y -= 62; }
+        if (medicoPdf){ linhaCab('MÉDICO', medicoPdf, y - 47); linhaCab('MÊS', compNome(r.mes).toUpperCase(), y - 62); y -= 77; }
+        else { linhaCab('MÊS', compNome(r.mes).toUpperCase(), y - 47); y -= 62; }
       } else {
-        texto(`Resumo de faturamento · ${r.prestador.nome}${medicoPdf ? ' · ' + medicoPdf : ''} · ${compBR(r.mes)}`, M, y - 10, { f: negrito, tam: 10, c: AZUL });
+        texto(`Resumo mensal de faturamento · ${r.prestador.nome}${medicoPdf ? ' · ' + medicoPdf : ''} · ${compBR(r.mes)}`, M, y - 10, { f: negrito, tam: 10, c: AZUL });
         y -= 20;
       }
       pagina.drawRectangle({ x: M, y, width: W - 2 * M, height: 2.5, color: AZUL });
-      y -= 24;
+      y -= 26;
       rodape();
     };
-    const espaco = precisa => { if (y - precisa < 60) novaPagina(false); };
+    const espaco = precisa => { if (y - precisa < 70) novaPagina(false); };
 
     novaPagina(true);
-    const xGuias = 380, xValor = W - M - 8;
-    const grupos = agruparResumo(r.grupos);
-    if (!grupos.length){ texto('Nada faturado nesta competência.', M, y, { c: CINZA }); y -= 24; }
-    for (const [conv, gs] of grupos){
-      espaco(22 + 18 + 18 * (gs.length + 1) + 14);
-      pagina.drawRectangle({ x: M, y: y - 16, width: W - 2 * M, height: 22, color: CLARO });
-      pagina.drawRectangle({ x: M, y: y - 16, width: 4, height: 22, color: AZUL });
-      texto(conv, M + 12, y - 9, { f: negrito, tam: 11 });
-      y -= 32;
-      texto('TIPO DE GUIA', M + 8, y, { f: negrito, tam: 7.5, c: CINZA });
-      texto('GUIAS', xGuias, y, { f: negrito, tam: 7.5, c: CINZA, alinhar: 'dir' });
-      texto('VALOR FATURADO', xValor, y, { f: negrito, tam: 7.5, c: CINZA, alinhar: 'dir' });
-      y -= 6; pagina.drawLine({ start: { x: M, y }, end: { x: W - M, y }, thickness: 0.8, color: LINHA }); y -= 13;
-      for (const g of gs){
-        texto(tipoNome(g.tipo), M + 8, y);
-        texto(String(g.guias), xGuias, y, { alinhar: 'dir' });
-        texto(dinheiro(g.faturado), xValor, y, { alinhar: 'dir' });
+    // Colunas: Convênio | Tipo do lote | Qtd | Valor | Previsão de pagamento
+    const xConv = M + 8, xTipo = 215, xQtd = 318, xValor = 420, xPrev = W - M - 8;
+    const cabecalhoTabela = () => {
+      pagina.drawRectangle({ x: M, y: y - 6, width: W - 2 * M, height: 20, color: CLARO });
+      texto('CONVÊNIO', xConv, y, { f: negrito, tam: 7.5, c: CINZA });
+      texto('TIPO DO LOTE', xTipo, y, { f: negrito, tam: 7.5, c: CINZA });
+      texto('QTD', xQtd, y, { f: negrito, tam: 7.5, c: CINZA, alinhar: 'dir' });
+      texto('VALOR', xValor, y, { f: negrito, tam: 7.5, c: CINZA, alinhar: 'dir' });
+      texto('PREVISÃO DE PAGAMENTO', xPrev, y, { f: negrito, tam: 7.5, c: CINZA, alinhar: 'dir' });
+      y -= 22;
+    };
+    if (!r.grupos.length){ texto('Nada faturado nesta competência.', M, y, { c: CINZA }); y -= 24; }
+    else {
+      cabecalhoTabela();
+      let convAnterior = null;
+      for (const g of r.grupos){
+        if (y - 18 < 70){ novaPagina(false); cabecalhoTabela(); convAnterior = null; }
+        const primeira = g.convenio !== convAnterior; convAnterior = g.convenio;
+        if (primeira) texto(g.convenio, xConv, y, { f: negrito, tam: 9.5 });
+        texto(tipoNome(g.tipo), xTipo, y, { tam: 9.5 });
+        texto(String(g.guias), xQtd, y, { tam: 9.5, alinhar: 'dir' });
+        texto(dinheiro(g.faturado), xValor, y, { tam: 9.5, alinhar: 'dir' });
+        texto(previsaoTexto(g), xPrev, y, { tam: 9.5, alinhar: 'dir', c: g.pago ? VERDE : TINTA, f: g.pago ? negrito : fonte });
         y -= 6; pagina.drawLine({ start: { x: M, y }, end: { x: W - M, y }, thickness: 0.5, color: FINA }); y -= 13;
       }
-      const st = somaResumo(gs);
-      texto(`Total ${conv}`, M + 8, y, { f: negrito });
-      texto(String(st.guias), xGuias, y, { f: negrito, alinhar: 'dir' });
-      texto(dinheiro(st.faturado), xValor, y, { f: negrito, alinhar: 'dir' });
-      y -= 30;
     }
+    y -= 16;  // respiro entre a última linha e a faixa do total
+    espaco(50);
+    const total = somaResumo(r.grupos);
+    pagina.drawRectangle({ x: M, y: y - 14, width: W - 2 * M, height: 34, color: TINTA });
+    texto(`TOTAL · ${total.guias} GUIA${total.guias === 1 ? '' : 'S'}`, M + 14, y - 1, { f: negrito, tam: 10.5, c: rgb(1, 1, 1) });
+    texto(dinheiro(total.faturado), W - M - 14, y - 2, { f: negrito, tam: 14, c: rgb(1, 1, 1), alinhar: 'dir' });
+    y -= 50;
     if (r.por_medico && r.por_medico.length > 1){
       espaco(22 + 18 + 18 * (r.por_medico.length + 1) + 14);
       pagina.drawRectangle({ x: M, y: y - 16, width: W - 2 * M, height: 22, color: CLARO });
@@ -814,28 +870,32 @@
       texto('POR MÉDICO', M + 12, y - 9, { f: negrito, tam: 11 });
       y -= 32;
       texto('MÉDICO', M + 8, y, { f: negrito, tam: 7.5, c: CINZA });
-      texto('GUIAS', xGuias, y, { f: negrito, tam: 7.5, c: CINZA, alinhar: 'dir' });
-      texto('VALOR FATURADO', xValor, y, { f: negrito, tam: 7.5, c: CINZA, alinhar: 'dir' });
+      texto('QTD', xQtd, y, { f: negrito, tam: 7.5, c: CINZA, alinhar: 'dir' });
+      texto('VALOR', xPrev, y, { f: negrito, tam: 7.5, c: CINZA, alinhar: 'dir' });
       y -= 6; pagina.drawLine({ start: { x: M, y }, end: { x: W - M, y }, thickness: 0.8, color: LINHA }); y -= 13;
       for (const g of r.por_medico){
         texto(g.medico || 'Sem médico informado', M + 8, y);
-        texto(String(g.guias), xGuias, y, { alinhar: 'dir' });
-        texto(dinheiro(g.faturado), xValor, y, { alinhar: 'dir' });
+        texto(String(g.guias), xQtd, y, { alinhar: 'dir' });
+        texto(dinheiro(g.faturado), xPrev, y, { alinhar: 'dir' });
         y -= 6; pagina.drawLine({ start: { x: M, y }, end: { x: W - M, y }, thickness: 0.5, color: FINA }); y -= 13;
       }
       y -= 12;
     }
-    espaco(50);
-    const total = somaResumo(r.grupos);
-    pagina.drawRectangle({ x: M, y: y - 14, width: W - 2 * M, height: 34, color: TINTA });
-    texto(`TOTAL GERAL · ${total.guias} GUIA${total.guias === 1 ? '' : 'S'}`, M + 14, y - 1, { f: negrito, tam: 10.5, c: rgb(1, 1, 1) });
-    texto(dinheiro(total.faturado), W - M - 14, y - 2, { f: negrito, tam: 14, c: rgb(1, 1, 1), alinhar: 'dir' });
-    y -= 50;
+    espaco(30);
+    texto('Previsão de pagamento = até quando cada convênio tem para pagar o que foi enviado. "A definir" = o convênio ainda não informou a data.', M, y, { tam: 7.5, c: CINZA });
 
-    // Willian 23/11: a lista "Protocolos anexados" não vai no PDF (os protocolos já vêm nas páginas seguintes)
-    for (const { pdf } of anexos){
-      const paginas = await doc.copyPages(pdf, pdf.getPageIndices());
-      paginas.forEach(p => doc.addPage(p));
+    // Capas: os PDFs dos protocolos da competência, um atrás do outro (só quando pedido).
+    const falhas = [];
+    for (let i = 0; i < protocolos.length; i++){
+      const d = protocolos[i];
+      aviso(`Anexando capa ${i + 1} de ${protocolos.length}…`);
+      try {
+        const resp = await fetch(`/api/documentos?id=${d.id}`, { credentials: 'same-origin' });
+        if (!resp.ok) throw new Error(String(resp.status));
+        const pdf = await PDFDocument.load(await resp.arrayBuffer(), { ignoreEncryption: true });
+        const paginas = await doc.copyPages(pdf, pdf.getPageIndices());
+        paginas.forEach(p => doc.addPage(p));
+      } catch (e){ console.error('protocolo', d.id, e); falhas.push(d.numero); }
     }
     aviso('Salvando…');
     return { bytes: await doc.save(), paginas: doc.getPageCount(), falhas };

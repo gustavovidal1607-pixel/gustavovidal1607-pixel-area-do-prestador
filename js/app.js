@@ -188,7 +188,7 @@
   // ---------------------------------------------------------------- entrada no sistema
   const ABAS = {
     faturas: [['prestadores', 'Prestadores'], ['acessos', 'Acessos']],
-    prestador: [['painel', 'Painel'], ['faturas', 'Faturas'], ['protocolos', 'Protocolos'], ['repasses', 'Repasses']],
+    prestador: [['painel', 'Painel'], ['faturas', 'Faturas'], ['resumo', 'Resumo'], ['protocolos', 'Protocolos'], ['repasses', 'Repasses']],
   };
 
   function entrar(usuario){

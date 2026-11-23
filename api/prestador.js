@@ -95,7 +95,18 @@ module.exports = L.rota(async (req, res) => {
       `SELECT convenio, tipo,
               count(DISTINCT COALESCE(guia, 'linha-' || id))::int AS guias,
               count(*)::int AS procedimentos,
-              COALESCE(sum(faturado), 0)::float8 AS faturado
+              COALESCE(sum(faturado), 0)::float8 AS faturado,
+              COALESCE(sum(recebido), 0)::float8 AS recebido,
+              bool_and(situacao <> 'aguardando') AS pago,
+              to_char(max(data_pagamento), 'YYYY-MM-DD') AS data_pagamento,
+              -- até quando o prestador tem para receber: a maior previsão dos lotes do grupo
+              -- (a do protocolo cadastrado pela equipe vale mais que a da planilha/regra)
+              to_char(max(COALESCE((SELECT d.previsao_pagamento FROM documentos d
+                 WHERE d.prestador_id = producao.prestador_id AND d.categoria = 'protocolo' AND d.excluido_em IS NULL
+                   AND d.numero = producao.lote AND d.previsao_pagamento IS NOT NULL ORDER BY d.id DESC LIMIT 1),
+                 previsao_pagamento)), 'YYYY-MM-DD') AS previsao,
+              min(to_char(data_lote, 'YYYY-MM-DD')) AS primeiro_envio,
+              max(to_char(data_lote, 'YYYY-MM-DD')) AS ultimo_envio
          FROM producao WHERE prestador_id = $1 AND competencia = $2 AND ($3::text IS NULL OR ($3 = '-' AND medico IS NULL) OR medico = $3)
         GROUP BY convenio, tipo
         ORDER BY convenio, CASE tipo WHEN 'CONSULTA' THEN 1 WHEN 'SADT' THEN 2 WHEN 'HONORÁRIO' THEN 3 ELSE 4 END, tipo`,
