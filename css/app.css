@@ -184,7 +184,7 @@ input:disabled,select:disabled{background:var(--papel); color:var(--cinza-claro)
 .topo-usuario{margin-left:auto; display:flex; align-items:center; gap:14px;}
 .topo-nome{font-weight:600; font-size:14px;}
 
-.conteudo{max-width:1480px; margin:0 auto; padding:24px 28px;}
+.conteudo{max-width:1760px; margin:0 auto; padding:24px 28px;}
 
 /* ------------------------------------------------------------------ mesa da recepção */
 .mesa{display:grid; grid-template-columns:minmax(340px, 430px) 1fr; gap:28px; align-items:start;}
@@ -533,7 +533,16 @@ h3.titulo-form{margin:0 0 4px; font:600 14.5px var(--fonte-titulo);}
 .vazio-li{padding:20px; text-align:center; color:var(--cinza); border:1px dashed var(--linha) !important; justify-content:center;}
 
 /* equipe: aba Prestadores */
-.equipe-prest{display:grid; grid-template-columns:minmax(320px, 1fr) minmax(360px, 1.1fr); gap:24px; align-items:start;}
+.equipe-prest{display:grid; grid-template-columns:minmax(360px, 1.15fr) minmax(360px, 1fr); gap:24px; align-items:start;}
+.equipe-prest .bloco-titulo{display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; margin-bottom:4px;}
+.equipe-prest .bloco-titulo h2{margin:0;}
+.contagem{display:inline-block; margin-left:8px; padding:2px 9px; border-radius:999px; background:var(--azul-claro, #E6F0FB); color:var(--azul); font:600 12.5px var(--fonte-titulo); vertical-align:middle;}
+.busca{position:relative; flex:1 1 220px; max-width:340px;}
+.busca input{width:100%; padding:9px 12px 9px 36px; border:1px solid var(--linha); border-radius:999px; font:inherit; font-size:14px; background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236B7A90' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-3.5-3.5'/%3E%3C/svg%3E") 12px 50% no-repeat;}
+.busca input:focus{outline:none; border-color:var(--azul); box-shadow:0 0 0 3px rgba(31,94,181,.15);}
+.lista-simples.rolavel{max-height:min(62vh, 640px); overflow-y:auto; overscroll-behavior:contain; scrollbar-gutter:stable;}
+.lista-simples.rolavel li[hidden]{display:none;}
+.sr-only{position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap;}
 .equipe-prest .inteiro-grade{grid-column:1 / -1;}
 .lista-simples .sync{display:block; color:var(--cinza-claro); font-size:12px;}
 .acoes-li{display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;}

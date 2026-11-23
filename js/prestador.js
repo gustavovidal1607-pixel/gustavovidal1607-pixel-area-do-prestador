@@ -783,11 +783,16 @@
     caixa.innerHTML = `
       <div class="equipe-prest">
         <section class="painel">
-          <h2>Prestadores</h2>
+          <div class="bloco-titulo">
+            <h2>Prestadores <small class="contagem" id="prest-contagem">${prestadores.length}</small></h2>
+            <label class="busca"><span class="sr-only">Pesquisar prestador</span>
+              <input type="search" id="busca-prest" placeholder="Pesquisar prestador…" autocomplete="off" value="${h(E.buscaPrest || '')}">
+            </label>
+          </div>
           <p class="sub">Médicos e clínicas com acesso ao portal. O nome é o mesmo da pasta das planilhas em CONTROLE DE PAGAMENTO. O login do prestador se cria em <b>Acessos</b>.</p>
-          <ul class="lista-simples prestadores">
+          <ul class="lista-simples prestadores rolavel" id="lista-prest">
             ${prestadores.length ? prestadores.map(p => `
-              <li class="${p.ativo ? '' : 'inativo'}">
+              <li class="${p.ativo ? '' : 'inativo'}" data-nome="${h(semAcento(p.nome))}">
                 <div class="info">
                   <strong>${h(p.nome)}</strong>
                   <small>${p.usuarios} acesso${p.usuarios === 1 ? '' : 's'} · ${p.linhas.toLocaleString('pt-BR')} linhas · ${p.documentos} documento${p.documentos === 1 ? '' : 's'}${p.ativo ? '' : ' · desativado'}</small>
@@ -863,8 +868,29 @@
     $('#e-docs').innerHTML = lista.length ? lista.map(d => itemDocumento(d, true)).join('') : '<li class="vazio-li">Nenhum documento.</li>';
   }
 
+  function semAcento(t){ return String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().trim(); }
+
+  // Filtro da lista de prestadores (pelo nome, sem acento). Mantém o que foi
+  // digitado quando a tela se redesenha.
+  function filtrarPrestadores(){
+    const termo = semAcento(E.buscaPrest);
+    let vistos = 0;
+    $$('#lista-prest li[data-nome]').forEach(li => {
+      const mostra = !termo || li.dataset.nome.includes(termo);
+      li.hidden = !mostra; if (mostra) vistos++;
+    });
+    const total = $$('#lista-prest li[data-nome]').length;
+    const c = $('#prest-contagem'); if (c) c.textContent = termo ? `${vistos} de ${total}` : String(total);
+    const vazio = $('#lista-prest .sem-resultado');
+    if (termo && !vistos){
+      if (!vazio) $('#lista-prest').insertAdjacentHTML('beforeend', `<li class="vazio-li sem-resultado">Nenhum prestador com "${h(E.buscaPrest)}".</li>`);
+    } else if (vazio) vazio.remove();
+  }
+
   function ligarEquipe(caixa){
     listaDocsEquipe();
+    filtrarPrestadores();
+    $('#busca-prest').oninput = ev => { E.buscaPrest = ev.target.value; filtrarPrestadores(); };
     $('#e-prest').onchange = ev => { E.filtroPrestador = ev.target.value; listaDocsEquipe(); };
     $('#e-cat').onchange = ev => { E.filtroCategoria = ev.target.value; listaDocsEquipe(); };
     $('#e-excl').onchange = ev => { E.verExcluidos = ev.target.checked; equipe($('#conteudo')); };
