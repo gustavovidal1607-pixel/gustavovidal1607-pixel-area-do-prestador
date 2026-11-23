@@ -26,7 +26,9 @@ python sync/sincronizar.py --url https://<sistema> --login <usuario.da.equipe>  
 python sync/sincronizar.py --json saida.json                                         # só gera o JSON
 python sync/sincronizar.py --prestador "RENAN BRITO" --url ... --login ...           # um prestador
 ```
-Os prestadores sincronizados ficam na lista `PRESTADORES` no começo do script. A senha nunca fica em arquivo. Para rodar todo dia, agendar no Agendador de Tarefas do Windows num PC com acesso a `\\faturasmed`.
+Os prestadores sincronizados ficam na lista `PRESTADORES` no começo do script.
+
+`sync/importar_capas.py` anexa como **protocolos** os PDFs de capa que os robôs de faturamento salvam em `Z:\FATURAMENTO\<CONVÊNIO>\<mês>\` (Bradesco `… - <protocolo> - CAPA.pdf`, Petrobras `… - LOTE n …` com o número do protocolo lido de dentro do PDF, SulAmérica `… - GRD n - dd.mm.aa.pdf`, Amil `<PRESTADOR>.pdf` com a lista de protocolos). Mesmo prestador + número não entra duas vezes; roda todo dia depois da sincronização (mesmo .bat). A competência do protocolo segue a do lote na planilha (coluna COMP), não a pasta do mês. Unimed ainda não. A senha nunca fica em arquivo. Para rodar todo dia, agendar no Agendador de Tarefas do Windows num PC com acesso a `\\faturasmed`.
 
 Regras aplicadas:
 - **Competência** = coluna **COMP** da planilha quando preenchida (decisão do Gustavo em 23/11/2026: ele mantém as competências à mão; `PLANILHA_MANDA` no script). Linha sem COMP: fechamento/envio do lote. **Unimed**: mês de envio. Outros: dentro do mês, se há um grupo de envios no começo (terminando até o dia 15), uma pausa ≥ 7 dias e depois outros envios, o primeiro grupo é da competência anterior; sem pausa assim, envio até o **5º dia útil** é da competência anterior. Sem data do lote: coluna COMP. `--detalhe` mostra as datas e a competência de cada grupo.
