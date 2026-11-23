@@ -572,19 +572,34 @@
   }
 
   // ---------------------------------------------------------------- resumo mensal de faturamento
-  // Folha única da competência: para cada convênio e tipo de lote, quantidade
-  // de guias, valor faturado e previsão de pagamento (até quando o prestador
-  // tem para receber), com o total. Sem os protocolos dos portais (Gustavo 23/11).
+  // Folha única da competência: para cada convênio e tipo de lote, guias,
+  // faturado, recebido, glosado, a receber, % de glosa e previsão de pagamento,
+  // com subtotal por convênio e total (Willian 23/11: mesmas colunas e mesmas
+  // contas do painel — glosa negativa da Unimed não conta; a receber = faturado
+  // das linhas sem recebido e sem glosa). Sem os protocolos dos portais.
   // O prestador vê na aba "Resumo"; a equipe abre pelo botão "Resumo" do prestador.
-  // Resumo de FATURAMENTO: só o que foi enviado e até quando tem para receber.
-  // O que já foi pago não entra aqui (isso é o resumo de pagamento).
   const previsaoTexto = g => g.previsao ? dataBR(g.previsao) : 'A definir';
+  const pctGlosa = g => g.faturado > 0 ? (g.glosado / g.faturado) * 100 : 0;
   const RODAPE_EMPRESA = 'Faturas Med · Avenida Rui Barbosa, 1011, Sl 205 e 206, Centro – Macaé/RJ · www.faturasmed.com.br · (22) 2213-0101 · WhatsApp (22) 99877-5196';
+  const NOTA_RESUMO = 'Glosado = faturado e não pago pelo convênio (pagamento acima do faturado não conta como glosa). A receber = faturado ainda sem pagamento e sem glosa. % glosa = glosado ÷ faturado. Previsão de pagamento = até quando o convênio tem para pagar o que foi enviado; "A definir" = ainda sem data.';
+  // Linhas da folha (tela e PDF): grupo convênio × tipo, subtotal do convênio quando há mais de um tipo.
+  function linhasResumo(r){
+    const sub = {};
+    (r.por_convenio || []).forEach(c => { sub[c.convenio] = c; });
+    const out = [];
+    agruparResumo(r.grupos).forEach(([conv, gs]) => {
+      gs.forEach((g, i) => out.push({ tipo: 'grupo', primeira: i === 0, g }));
+      if (gs.length > 1) out.push({ tipo: 'sub', g: { convenio: conv, ...(sub[conv] || somaResumo(gs)) } });
+    });
+    return out;
+  }
+  const totalResumo = r => (r.por_convenio && r.por_convenio.length ? somaResumo(r.por_convenio) : somaResumo(r.grupos));
 
   function htmlFolha(r, medico){
-    const total = somaResumo(r.grupos);
+    const total = totalResumo(r);
     const gerado = new Date(r.gerado_em);
-    let convAnterior = null;
+    const valores = g => `<td class="n">${g.guias}</td><td class="n">${dinheiro(g.faturado)}</td><td class="n">${dinheiro(g.recebido)}</td><td class="n">${dinheiro(g.glosado)}</td><td class="n">${dinheiro(g.a_receber)}</td><td class="n">${pct(pctGlosa(g))}</td>`;
+    const cabValores = '<th class="n">Guias</th><th class="n">Faturado</th><th class="n">Recebido</th><th class="n">Glosado</th><th class="n">A receber</th><th class="n">% glosa</th>';
     return `
         <header class="folha-cabeca">
           <img src="img/logo.svg" alt="Faturas Med" class="folha-logo">
@@ -596,32 +611,35 @@
           </div>
         </header>
         ${r.grupos.length ? `
+        <div class="folha-rolagem">
         <table class="folha-tabela">
-          <thead><tr><th>Convênio</th><th>Tipo do lote</th><th class="n">Qtd</th><th class="n">Valor</th><th class="prev">Previsão de pagamento</th></tr></thead>
-          <tbody>${r.grupos.map(g => {
-            const primeira = g.convenio !== convAnterior; convAnterior = g.convenio;
-            return `<tr class="${primeira ? 'novo-conv' : ''}">
-              <td class="conv">${primeira ? h(g.convenio) : ''}</td>
-              <td>${h(tipoNome(g.tipo))}</td>
-              <td class="n">${g.guias}</td>
-              <td class="n">${dinheiro(g.faturado)}</td>
-              <td class="prev">${h(previsaoTexto(g))}</td>
-            </tr>`; }).join('')}</tbody>
-          <tfoot><tr><td colspan="2">Total</td><td class="n">${total.guias}</td><td class="n">${dinheiro(total.faturado)}</td><td></td></tr></tfoot>
-        </table>` : `<p class="folha-vazio">Nada faturado nesta competência.</p>`}
+          <thead><tr><th>Convênio</th><th>Tipo do lote</th>${cabValores}<th class="prev">Previsão de pagamento</th></tr></thead>
+          <tbody>${linhasResumo(r).map(l => l.tipo === 'sub'
+            ? `<tr class="subtotal"><td></td><td>Subtotal</td>${valores(l.g)}<td></td></tr>`
+            : `<tr class="${l.primeira ? 'novo-conv' : ''}">
+              <td class="conv">${l.primeira ? h(l.g.convenio) : ''}</td>
+              <td>${h(tipoNome(l.g.tipo))}</td>
+              ${valores(l.g)}
+              <td class="prev">${h(previsaoTexto(l.g))}</td>
+            </tr>`).join('')}</tbody>
+          <tfoot><tr><td colspan="2">Total</td>${valores(total)}<td></td></tr></tfoot>
+        </table>
+        </div>` : `<p class="folha-vazio">Nada faturado nesta competência.</p>`}
         ${r.por_medico && r.por_medico.length > 1 ? `
         <section class="folha-conv">
           <h2>Por médico</h2>
-          <table>
-            <thead><tr><th>Médico</th><th class="n">Qtd</th><th class="n">Valor</th></tr></thead>
-            <tbody>${r.por_medico.map(g => `<tr><td>${h(g.medico || 'Sem médico informado')}</td><td class="n">${g.guias}</td><td class="n">${dinheiro(g.faturado)}</td></tr>`).join('')}</tbody>
+          <div class="folha-rolagem">
+          <table class="folha-tabela">
+            <thead><tr><th>Médico</th>${cabValores}</tr></thead>
+            <tbody>${r.por_medico.map(g => `<tr><td>${h(g.medico || 'Sem médico informado')}</td>${valores(g)}</tr>`).join('')}</tbody>
           </table>
+          </div>
         </section>` : ''}
         <div class="folha-total">
           <span>Total faturado · ${total.guias} guia${total.guias === 1 ? '' : 's'}</span>
           <strong>${dinheiro(total.faturado)}</strong>
         </div>
-        <p class="folha-nota">Previsão de pagamento = até quando cada convênio tem para pagar o que foi enviado. "A definir" = o convênio ainda não informou a data.</p>
+        <p class="folha-nota">${h(NOTA_RESUMO)}</p>
         <footer class="folha-rodape">${h(RODAPE_EMPRESA)}<br>gerado em ${h(CF().quandoBR(gerado))}</footer>`;
   }
 
@@ -668,7 +686,7 @@
     }
     if (!P.comp || !comps.includes(P.comp)) P.comp = comps[0];
     caixa.innerHTML = `
-      ${cabecalho('Resumo de faturamento', 'O que foi faturado no mês, por convênio e tipo de lote, e até quando cada um tem para pagar.', `
+      ${cabecalho('Resumo de faturamento', 'O que foi faturado no mês, por convênio e tipo de lote: recebido, glosado, a receber e até quando cada um tem para pagar.', `
       <div class="filtros-portal">
         <label class="campo"><span>Competência</span>
           <select id="f-comp">${comps.map(c => `<option value="${c}" ${c === P.comp ? 'selected' : ''}>${compBR(c)}</option>`).join('')}</select>
@@ -744,7 +762,10 @@
     grupos.forEach(g => (por[g.convenio] = por[g.convenio] || []).push(g));
     return Object.entries(por);
   }
-  const somaResumo = gs => gs.reduce((s, g) => ({ guias: s.guias + g.guias, faturado: s.faturado + g.faturado }), { guias: 0, faturado: 0 });
+  const somaResumo = gs => gs.reduce((s, g) => ({
+    guias: s.guias + g.guias, faturado: s.faturado + g.faturado, recebido: s.recebido + (g.recebido || 0),
+    glosado: s.glosado + (g.glosado || 0), a_receber: s.a_receber + (g.a_receber || 0),
+  }), { guias: 0, faturado: 0, recebido: 0, glosado: 0, a_receber: 0 });
 
   function fecharResumo(){
     const tela = $('#resumo');
@@ -796,7 +817,8 @@
     const cor = hex => rgb(parseInt(hex.slice(1, 3), 16) / 255, parseInt(hex.slice(3, 5), 16) / 255, parseInt(hex.slice(5, 7), 16) / 255);
     const AZUL = cor('#0B60B5'), TINTA = cor('#0D2440'), CINZA = cor('#5E6772'), CLARO = cor('#E7F0FA'), LINHA = cor('#D5DFEA'), FINA = cor('#EBF0F5'), VERDE = cor('#1B7F4B');
     const t = s => String(s ?? '').replace(/[^\x20-\x7E\xA0-\xFF–—•…‘’“”]/g, '?');
-    const W = 595.28, H = 841.89, M = 48;
+    // Paisagem (A4 deitada): cabem as 9 colunas inteiras.
+    const W = 841.89, H = 595.28, M = 40;
     const larg = (s, f, tam) => f.widthOfTextAtSize(t(s), tam);
     let pagina, y;
     const texto = (s, x, yy, { f = fonte, tam = 10, c = TINTA, alinhar = 'esq' } = {}) => {
@@ -832,59 +854,82 @@
     const espaco = precisa => { if (y - precisa < 70) novaPagina(false); };
 
     novaPagina(true);
-    // Colunas: Convênio | Tipo do lote | Qtd | Valor | Previsão de pagamento
-    const xConv = M + 8, xTipo = 215, xQtd = 318, xValor = 420, xPrev = W - M - 8;
-    const cabecalhoTabela = () => {
-      pagina.drawRectangle({ x: M, y: y - 6, width: W - 2 * M, height: 20, color: CLARO });
-      texto('CONVÊNIO', xConv, y, { f: negrito, tam: 7.5, c: CINZA });
-      texto('TIPO DO LOTE', xTipo, y, { f: negrito, tam: 7.5, c: CINZA });
-      texto('QTD', xQtd, y, { f: negrito, tam: 7.5, c: CINZA, alinhar: 'dir' });
-      texto('VALOR', xValor, y, { f: negrito, tam: 7.5, c: CINZA, alinhar: 'dir' });
-      texto('PREVISÃO DE PAGAMENTO', xPrev, y, { f: negrito, tam: 7.5, c: CINZA, alinhar: 'dir' });
-      y -= 22;
+    // Colunas: Convênio | Tipo do lote | Guias | Faturado | Recebido | Glosado | A receber | % glosa | Previsão
+    const xConv = M + 8, xTipo = 184, xPrev = W - M - 8;
+    const COLS = [  // números alinhados à direita
+      { rot: 'GUIAS', x: 330, v: g => String(g.guias) },
+      { rot: 'FATURADO', x: 418, v: g => dinheiro(g.faturado) },
+      { rot: 'RECEBIDO', x: 503, v: g => dinheiro(g.recebido) },
+      { rot: 'GLOSADO', x: 588, v: g => dinheiro(g.glosado) },
+      { rot: 'A RECEBER', x: 673, v: g => dinheiro(g.a_receber) },
+      { rot: '% GLOSA', x: 722, v: g => pct(pctGlosa(g)) },
+    ];
+    const cabecalhoTabela = (primeiro = 'CONVÊNIO', comTipo = true, comPrev = true) => {
+      pagina.drawRectangle({ x: M, y: y - 9, width: W - 2 * M, height: 26, color: CLARO });
+      texto(primeiro, xConv, y, { f: negrito, tam: 7.5, c: CINZA });
+      if (comTipo) texto('TIPO DO LOTE', xTipo, y, { f: negrito, tam: 7.5, c: CINZA });
+      COLS.forEach(c => texto(c.rot, c.x, y, { f: negrito, tam: 7.5, c: CINZA, alinhar: 'dir' }));
+      if (comPrev){
+        texto('PREVISÃO DE', xPrev, y + 4.5, { f: negrito, tam: 7.5, c: CINZA, alinhar: 'dir' });
+        texto('PAGAMENTO', xPrev, y - 4.5, { f: negrito, tam: 7.5, c: CINZA, alinhar: 'dir' });
+      }
+      y -= 25;
     };
+    const valoresLinha = (g, opc) => COLS.forEach(c => texto(c.v(g), c.x, y, { tam: 9, alinhar: 'dir', ...opc }));
+    // corta o texto para caber até a largura (nomes longos de médico/convênio)
+    const caber = (s, f, tam, w) => { s = String(s); if (larg(s, f, tam) <= w) return s; while (s.length > 1 && larg(s + '…', f, tam) > w) s = s.slice(0, -1); return s + '…'; };
     if (!r.grupos.length){ texto('Nada faturado nesta competência.', M, y, { c: CINZA }); y -= 24; }
     else {
       cabecalhoTabela();
-      let convAnterior = null;
-      for (const g of r.grupos){
-        if (y - 18 < 70){ novaPagina(false); cabecalhoTabela(); convAnterior = null; }
-        const primeira = g.convenio !== convAnterior; convAnterior = g.convenio;
-        if (primeira) texto(g.convenio, xConv, y, { f: negrito, tam: 9.5 });
-        texto(tipoNome(g.tipo), xTipo, y, { tam: 9.5 });
-        texto(String(g.guias), xQtd, y, { tam: 9.5, alinhar: 'dir' });
-        texto(dinheiro(g.faturado), xValor, y, { tam: 9.5, alinhar: 'dir' });
-        texto(previsaoTexto(g), xPrev, y, { tam: 9.5, alinhar: 'dir' });
-        y -= 6; pagina.drawLine({ start: { x: M, y }, end: { x: W - M, y }, thickness: 0.5, color: FINA }); y -= 13;
+      let convAtual = null;
+      for (const l of linhasResumo(r)){
+        if (y - 18 < 70){ novaPagina(false); cabecalhoTabela(); convAtual = null; }
+        const g = l.g;
+        if (l.tipo === 'sub'){
+          pagina.drawRectangle({ x: M, y: y - 6, width: W - 2 * M, height: 18, color: FINA });
+          texto('Subtotal', xTipo, y, { f: negrito, tam: 9 });
+          valoresLinha(g, { f: negrito });
+        } else {
+          if (l.primeira || g.convenio !== convAtual) texto(caber(g.convenio, negrito, 9, xTipo - xConv - 8), xConv, y, { f: negrito, tam: 9 });
+          texto(caber(tipoNome(g.tipo), fonte, 9, COLS[0].x - xTipo - 30), xTipo, y, { tam: 9 });
+          valoresLinha(g);
+          texto(previsaoTexto(g), xPrev, y, { tam: 9, alinhar: 'dir' });
+        }
+        convAtual = g.convenio;
+        y -= 6; pagina.drawLine({ start: { x: M, y }, end: { x: W - M, y }, thickness: 0.5, color: LINHA }); y -= 13;
       }
     }
-    y -= 16;  // respiro entre a última linha e a faixa do total
-    espaco(50);
-    const total = somaResumo(r.grupos);
-    pagina.drawRectangle({ x: M, y: y - 14, width: W - 2 * M, height: 34, color: TINTA });
-    texto(`TOTAL · ${total.guias} GUIA${total.guias === 1 ? '' : 'S'}`, M + 14, y - 1, { f: negrito, tam: 10.5, c: rgb(1, 1, 1) });
-    texto(dinheiro(total.faturado), W - M - 14, y - 2, { f: negrito, tam: 14, c: rgb(1, 1, 1), alinhar: 'dir' });
-    y -= 50;
+    y -= 10;  // respiro entre a última linha e a faixa do total
+    espaco(40);
+    const total = totalResumo(r);
+    const BRANCO = rgb(1, 1, 1);
+    pagina.drawRectangle({ x: M, y: y - 11, width: W - 2 * M, height: 30, color: TINTA });
+    texto('TOTAL', M + 14, y, { f: negrito, tam: 10.5, c: BRANCO });
+    COLS.forEach(c => texto(c.v(total), c.x, y, { f: negrito, tam: 9.5, c: BRANCO, alinhar: 'dir' }));
+    y -= 44;
     if (r.por_medico && r.por_medico.length > 1){
-      espaco(22 + 18 + 18 * (r.por_medico.length + 1) + 14);
+      espaco(22 + 34 + 19 * (r.por_medico.length + 1) + 14);
       pagina.drawRectangle({ x: M, y: y - 16, width: W - 2 * M, height: 22, color: CLARO });
       pagina.drawRectangle({ x: M, y: y - 16, width: 4, height: 22, color: AZUL });
       texto('POR MÉDICO', M + 12, y - 9, { f: negrito, tam: 11 });
-      y -= 32;
-      texto('MÉDICO', M + 8, y, { f: negrito, tam: 7.5, c: CINZA });
-      texto('QTD', xQtd, y, { f: negrito, tam: 7.5, c: CINZA, alinhar: 'dir' });
-      texto('VALOR', xPrev, y, { f: negrito, tam: 7.5, c: CINZA, alinhar: 'dir' });
-      y -= 6; pagina.drawLine({ start: { x: M, y }, end: { x: W - M, y }, thickness: 0.8, color: LINHA }); y -= 13;
+      y -= 40;
+      cabecalhoTabela('MÉDICO', false, false);
       for (const g of r.por_medico){
-        texto(g.medico || 'Sem médico informado', M + 8, y);
-        texto(String(g.guias), xQtd, y, { alinhar: 'dir' });
-        texto(dinheiro(g.faturado), xPrev, y, { alinhar: 'dir' });
-        y -= 6; pagina.drawLine({ start: { x: M, y }, end: { x: W - M, y }, thickness: 0.5, color: FINA }); y -= 13;
+        if (y - 18 < 70){ novaPagina(false); cabecalhoTabela('MÉDICO', false, false); }
+        texto(caber(g.medico || 'Sem médico informado', fonte, 9, COLS[0].x - xConv - 40), xConv, y, { tam: 9 });
+        valoresLinha(g);
+        y -= 6; pagina.drawLine({ start: { x: M, y }, end: { x: W - M, y }, thickness: 0.5, color: LINHA }); y -= 13;
       }
       y -= 12;
     }
     espaco(30);
-    texto('Previsão de pagamento = até quando cada convênio tem para pagar o que foi enviado. "A definir" = o convênio ainda não informou a data.', M, y, { tam: 7.5, c: CINZA });
+    // nota em até duas linhas
+    const palavras = NOTA_RESUMO.split(' '); let lin = '';
+    for (const w of palavras){
+      if (larg(lin + ' ' + w, fonte, 7.5) > W - 2 * M - 10){ texto(lin, M, y, { tam: 7.5, c: CINZA }); y -= 10; lin = w; }
+      else lin = lin ? lin + ' ' + w : w;
+    }
+    if (lin) texto(lin, M, y, { tam: 7.5, c: CINZA });
 
     // Capas: os PDFs dos protocolos da competência, um atrás do outro (só quando pedido).
     const falhas = [];

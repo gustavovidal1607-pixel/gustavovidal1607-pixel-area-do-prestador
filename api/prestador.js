@@ -97,6 +97,8 @@ module.exports = L.rota(async (req, res) => {
               count(*)::int AS procedimentos,
               COALESCE(sum(faturado), 0)::float8 AS faturado,
               COALESCE(sum(recebido), 0)::float8 AS recebido,
+              COALESCE(sum(GREATEST(glosado, 0)), 0)::float8 AS glosado,  -- igual ao painel: glosa negativa (Unimed) não conta
+              COALESCE(sum(faturado) FILTER (WHERE situacao = 'aguardando'), 0)::float8 AS a_receber,
               bool_and(situacao <> 'aguardando') AS pago,
               to_char(max(data_pagamento), 'YYYY-MM-DD') AS data_pagamento,
               -- até quando o prestador tem para receber: a maior previsão dos lotes do grupo
@@ -112,15 +114,25 @@ module.exports = L.rota(async (req, res) => {
         ORDER BY convenio, CASE tipo WHEN 'CONSULTA' THEN 1 WHEN 'SADT' THEN 2 WHEN 'HONORÁRIO' THEN 3 ELSE 4 END, tipo`,
       [prestadorId, mes, medico]
     );
+    // Mesmas somas do painel (convênio inteiro): subtotais e total da folha batem com o painel.
+    const SOMAS = `count(DISTINCT COALESCE(guia, 'linha-' || id))::int AS guias,
+              COALESCE(sum(faturado), 0)::float8 AS faturado,
+              COALESCE(sum(recebido), 0)::float8 AS recebido,
+              COALESCE(sum(GREATEST(glosado, 0)), 0)::float8 AS glosado,
+              COALESCE(sum(faturado) FILTER (WHERE situacao = 'aguardando'), 0)::float8 AS a_receber`;
+    const por_convenio = await db.query(
+      `SELECT convenio, ${SOMAS}
+         FROM producao WHERE prestador_id = $1 AND competencia = $2 AND ($3::text IS NULL OR ($3 = '-' AND medico IS NULL) OR medico = $3)
+        GROUP BY convenio ORDER BY convenio`,
+      [prestadorId, mes, medico]
+    );
     // Tudo junto numa clínica com médicos: também o total de cada médico.
     const por_medico = !medico && medicos.length ? await db.query(
-      `SELECT COALESCE(medico, '') AS medico,
-              count(DISTINCT COALESCE(guia, 'linha-' || id))::int AS guias,
-              COALESCE(sum(faturado), 0)::float8 AS faturado
+      `SELECT COALESCE(medico, '') AS medico, ${SOMAS}
          FROM producao WHERE prestador_id = $1 AND competencia = $2
         GROUP BY COALESCE(medico, '') ORDER BY COALESCE(medico, '') = '', 1`,
       [prestadorId, mes]) : [];
-    return L.responder(res, 200, { prestador, mes, grupos, por_medico, gerado_em: new Date().toISOString(), ...infoMedico });
+    return L.responder(res, 200, { prestador, mes, grupos, por_convenio, por_medico, gerado_em: new Date().toISOString(), ...infoMedico });
   }
 
   return L.responder(res, 400, { erro: 'Ação desconhecida.' });

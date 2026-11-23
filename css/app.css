@@ -571,7 +571,7 @@ body.com-resumo{overflow:hidden;}
 .resumo-barra select{min-width:150px; color:var(--tinta);}
 .resumo-botoes{display:flex; gap:8px; flex-wrap:wrap;}
 .resumo-botoes .botao.fantasma{background:#fff;}
-.folha{max-width:860px; margin:0 auto; background:#fff; border-radius:6px; box-shadow:0 20px 60px rgba(0,0,0,.3); padding:44px 52px; color:var(--tinta);}
+.folha{max-width:1120px; margin:0 auto; background:#fff; border-radius:6px; box-shadow:0 20px 60px rgba(0,0,0,.3); padding:44px 52px; color:var(--tinta);}
 .folha-cabeca{display:flex; align-items:center; justify-content:space-between; gap:24px; padding-bottom:20px; border-bottom:3px solid var(--azul); margin-bottom:26px; flex-wrap:wrap;}
 .folha-logo{height:58px; width:auto;}
 .folha-titulo{text-align:right;}
@@ -591,7 +591,11 @@ body.com-resumo{overflow:hidden;}
 .folha-total strong{font:600 22px var(--fonte-num);}
 .folha-rodape{margin-top:28px; padding-top:10px; border-top:1px solid var(--linha); font-size:11px; color:var(--cinza-claro); text-align:center;}
 .folha-vazio{color:var(--cinza); text-align:center; padding:30px;}
-/* folha do resumo mensal: convênio | tipo do lote | qtd | valor | previsão */
+/* folha do resumo mensal: convênio | tipo | guias | faturado | recebido | glosado | a receber | % glosa | previsão */
+.folha-rolagem{overflow-x:auto; -webkit-overflow-scrolling:touch;}
+.folha .folha-tabela{font-size:13px; min-width:860px;}
+.folha .folha-tabela th,.folha .folha-tabela td{padding:7px 8px;}
+.folha-tabela tr.subtotal td{background:#F3F7FB; font-weight:600;}
 .folha-tabela td.conv{font-weight:700; color:var(--tinta);}
 .folha-tabela tr.novo-conv td{border-top:1.5px solid var(--linha);}
 .folha-tabela tr.novo-conv:first-child td{border-top:none;}
@@ -599,11 +603,11 @@ body.com-resumo{overflow:hidden;}
 .folha-tabela td.prev.pago{color:#1B7F4B; font-weight:600;}
 .folha-nota{margin:18px 0 0; font-size:12px; color:var(--cinza);}
 .resumo-aba{margin-top:6px;}
-.resumo-aba .folha{box-shadow:var(--sombra); max-width:900px; margin:0 auto;}
+.resumo-aba .folha{box-shadow:var(--sombra); max-width:1120px; margin:0 auto;}
 .resumo-status{text-align:center; color:var(--cinza); font-size:13px; min-height:18px;}
 
 @media print{
-  @page{size:A4; margin:14mm;}
+  @page{size:A4 landscape; margin:12mm;}
   body{background:#fff;}
   body.com-resumo > *:not(#resumo){display:none !important;}
   .resumo-tela{position:static; background:none; padding:0; overflow:visible;}
