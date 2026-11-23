@@ -291,14 +291,14 @@ def aplicar_competencias(linhas, convenio=""):
 
 
 def _competencias_pela_data(linhas, convenio=""):
-    if sem_acento(convenio).startswith("UNIMED"):
+    if sem_acento(convenio).startswith(("UNIMED", "PETROBRAS")):   # Willian 23/11: Petrobrás igual à Unimed (mês de envio)
         por_mes = {}
         for l in linhas:
             d = como_data(l.get("data_lote"))
             l["comp"] = f"{d.year:04d}-{d.month:02d}" if d else l["comp_planilha"]
             if d:
                 por_mes.setdefault(l["comp"], set()).add(d)
-        return [{"mes": m, "motivo": "Unimed: competência = mês de envio",
+        return [{"mes": m, "motivo": "Unimed/Petrobrás: competência = mês de envio",
                  "grupos": [(sorted(x.isoformat() for x in ds), m)]} for m, ds in sorted(por_mes.items())]
     datas = {}
     for l in linhas:
