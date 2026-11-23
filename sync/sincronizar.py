@@ -102,6 +102,12 @@ DIA_01_E_MARCADOR = True
 # Regra da competência pela pausa nos envios (ver competencias_por_envio).
 PAUSA_MINIMA_DIAS = 7
 PRIMEIRO_GRUPO_ATE_DIA = 15
+# Corte informado pelo Willian (fechamento da competência anterior no escritório): no mês da chave, lote
+# enviado ATÉ a data é da competência anterior e depois dela é do mês vigente. Vale para todos os prestadores
+# (menos Unimed e Petrobrás, que são pelo mês de envio) e manda sobre a regra da pausa / 5º dia útil.
+CORTES_COMPETENCIA = {
+    "2026-11": "2026-11-13",   # Willian 23/11: lotes fechados até 13/11 = competência 10/2026
+}
 DIA_UTIL_LIMITE = 5
 
 
@@ -245,6 +251,15 @@ def competencias_por_envio(datas):
         ant = "%04d-%02d" % mes_anterior(ano, mes)
         vig = "%04d-%02d" % (ano, mes)
         quinto = dia_util(ano, mes)
+        corte = CORTES_COMPETENCIA.get(vig)
+        if corte:
+            corte_d = dt.date.fromisoformat(corte)
+            grupos = [(g, c) for g, c in (([d for d in ds if d <= corte_d], ant), ([d for d in ds if d > corte_d], vig)) if g]
+            for g, c in grupos:
+                for d in g:
+                    comp[d] = c
+            detalhe.append({"mes": vig, "motivo": f"corte do escritório: até {corte_d:%d/%m} -> anterior", "grupos": [([d.isoformat() for d in g], c) for g, c in grupos]})
+            continue
         gaps = [((ds[i + 1] - ds[i]).days, i) for i in range(len(ds) - 1)]
         maior, corte = max(gaps) if gaps else (0, -1)
         if maior >= PAUSA_MINIMA_DIAS and ds[corte].day <= PRIMEIRO_GRUPO_ATE_DIA:
