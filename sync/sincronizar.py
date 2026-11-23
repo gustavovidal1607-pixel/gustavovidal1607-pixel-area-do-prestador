@@ -56,11 +56,15 @@ PRESTADORES = [
     "VERONICA RODRIGUES", "VINICIUS ANTUNES",
 ]
 
-# Pastas com OUTRO nome que pertencem ao mesmo prestador (planilhas somadas no portal).
+# Pastas com OUTRO nome que pertencem ao mesmo prestador (planilhas somadas no
+# portal): {prestador: {pasta: nome do médico}}. As linhas dessas pastas entram
+# com esse médico (o portal deixa ver por médico ou tudo junto). Nas planilhas
+# que têm a coluna MÉDICO (Azul), o médico vem da coluna.
 # CAEM na Petrobras fatura como pessoa física; a Azul tem uma pasta por médico na Unimed.
 PASTAS_EXTRAS = {
-    "CAEM": ["CLAUDIO LUIZ LOURENÇO"],
-    "AZUL OFTALMOLOGIA": ["ERICK MARCET - AZUL OFTALMOLOGIA", "RACHEL CAMARGO - AZUL OFTALMOLOGIA"],
+    "CAEM": {"CLAUDIO LUIZ LOURENÇO": "CLAUDIO LUIZ LOURENÇO"},
+    "AZUL OFTALMOLOGIA": {"ERICK MARCET - AZUL OFTALMOLOGIA": "ERICK MARCET",
+                          "RACHEL CAMARGO - AZUL OFTALMOLOGIA": "RACHEL CAMARGO"},
 }
 
 # Campo normalizado -> nomes possíveis do cabeçalho (já sem acento, maiúsculo).
@@ -85,6 +89,7 @@ CAMPOS = {
     "data_pagamento": ["DATA PAGAMENTO", "DATA DE PAGAMENTO"],
     "status": ["STATUS"],
     "motivo_glosa": ["MOTIVO DE GLOSA", "CRITICA DE GLOSA"],
+    "medico": ["MEDICO", "NOME DO MEDICO", "MEDICO EXECUTANTE", "PROFISSIONAL", "EXECUTANTE"],
     "previsao_pagamento": ["PREVISAO DE PAGAMENTO", "PREVISAO PAGAMENTO", "PREVISAO"],
 }
 OBRIGATORIOS = ["comp", "guia", "faturado"]
@@ -287,33 +292,33 @@ def aplicar_competencias(linhas, convenio=""):
 
 
 def achar_planilha(prestador, pasta_base):
-    """[(convenio, [caminhos])] de todas as planilhas do prestador (pasta dele + PASTAS_EXTRAS)."""
+    """[(convenio, [(caminho, medico_da_pasta)])] de todas as planilhas do prestador (pasta dele + PASTAS_EXTRAS)."""
     try:
         convenios = sorted(os.listdir(pasta_base))
     except OSError as e:
         raise SystemExit(f"Não consegui abrir {pasta_base}: {e}")
-    nomes = [prestador] + PASTAS_EXTRAS.get(prestador, [])
+    nomes = [(prestador, None)] + list(PASTAS_EXTRAS.get(prestador, {}).items())
     achadas = {}
     for convenio in convenios:
-        for nome in nomes:
+        for nome, medico in nomes:
             pasta = os.path.join(pasta_base, convenio, nome)
             if not os.path.isdir(pasta):
                 continue
             esperado = os.path.join(pasta, f"{nome} - {convenio}.xlsx")
             if os.path.isfile(esperado):
-                achadas.setdefault(convenio, []).append(esperado)
+                achadas.setdefault(convenio, []).append((esperado, medico))
                 continue
             candidatos = [f for f in os.listdir(pasta)
                           if f.lower().endswith(".xlsx") and not f.startswith("~$")
                           and sem_acento(f).startswith(sem_acento(nome))]
             if len(candidatos) == 1:
-                achadas.setdefault(convenio, []).append(os.path.join(pasta, candidatos[0]))
+                achadas.setdefault(convenio, []).append((os.path.join(pasta, candidatos[0]), medico))
             elif candidatos:
                 print(f"  ! {convenio}: mais de uma planilha em {pasta}, pulei: {candidatos}", file=sys.stderr)
     return sorted(achadas.items())
 
 
-def ler_planilha(caminho, convenio):
+def ler_planilha(caminho, convenio, medico_pasta=None):
     """Copia para pasta temporária e lê. Devolve (linhas, avisos, aba)."""
     temp = tempfile.mkdtemp(prefix="sync_prestador_")
     try:
@@ -375,6 +380,8 @@ def ler_planilha(caminho, convenio):
                     "data_pagamento": valor_json(pega("data_pagamento")),
                     "status": pega("status"),
                     "motivo_glosa": pega("motivo_glosa"),
+                    # coluna MÉDICO da planilha; sem ela, o médico da pasta (PASTAS_EXTRAS)
+                    "medico": (str(pega("medico")).strip() if pega("medico") not in (None, "") else None) or medico_pasta,
                     # sem a coluna, o portal calcula pela regra do convênio
                     "previsao_pagamento": valor_json(pega("previsao_pagamento")),
                 }
@@ -477,9 +484,9 @@ def main():
         print(f"== {prestador}")
         for convenio, caminhos in achar_planilha(prestador, a.pasta):
             linhas, avisos, detalhe, abas, modificado, erro = [], [], [], [], None, False
-            for caminho in caminhos:
+            for caminho, medico_pasta in caminhos:
                 try:
-                    l1, a1, aba1, d1 = ler_planilha(caminho, convenio)
+                    l1, a1, aba1, d1 = ler_planilha(caminho, convenio, medico_pasta)
                 except Exception as e:  # planilha aberta/corrompida: segue com as outras
                     print(f"  ! {convenio}: não consegui ler {os.path.basename(caminho)} ({e})", file=sys.stderr)
                     erro = True
@@ -493,7 +500,7 @@ def main():
                 continue
             aba = "+".join(abas) if len(abas) > 1 else (abas[0] if abas else None)
             pacote = {"prestador": prestador, "convenio": convenio,
-                      "arquivo": " + ".join(os.path.basename(c) for c in caminhos),
+                      "arquivo": " + ".join(os.path.basename(c) for c, _ in caminhos),
                       "arquivo_modificado": modificado, "linhas": linhas,
                       "competencias_por_envio": detalhe}
             total = round(sum(float(l["faturado"]) for l in linhas if isinstance(l["faturado"], (int, float))), 2)

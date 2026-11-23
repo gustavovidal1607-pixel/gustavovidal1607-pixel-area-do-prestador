@@ -26,7 +26,8 @@ module.exports = L.rota(async (req, res) => {
               (SELECT count(*)::int FROM producao r WHERE r.prestador_id = p.id) AS linhas,
               (SELECT count(*)::int FROM documentos d WHERE d.prestador_id = p.id AND d.excluido_em IS NULL) AS documentos,
               COALESCE((SELECT json_agg(json_build_object('convenio', s.convenio, 'linhas', s.linhas, 'quando', s.quando, 'arquivo_modificado', s.arquivo_modificado) ORDER BY s.convenio)
-                          FROM sincronizacoes s WHERE s.prestador_id = p.id), '[]'::json) AS sincronizacoes
+                          FROM sincronizacoes s WHERE s.prestador_id = p.id), '[]'::json) AS sincronizacoes,
+              COALESCE((SELECT json_agg(DISTINCT r.medico) FROM producao r WHERE r.prestador_id = p.id AND r.medico IS NOT NULL), '[]'::json) AS medicos
          FROM prestadores p ORDER BY p.ativo DESC, p.nome`
     );
     return L.responder(res, 200, { prestadores, usuarios, eu: u.id, convenios_prestador: L.CONVENIOS_PRESTADOR, tipos_repasse: L.TIPOS_REPASSE });

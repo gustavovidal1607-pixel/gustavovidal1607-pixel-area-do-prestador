@@ -142,6 +142,8 @@ function prepararBanco(){
     await db.query(`CREATE INDEX IF NOT EXISTS producao_por_mes ON producao (prestador_id, competencia)`);
     await db.query(`CREATE INDEX IF NOT EXISTS producao_por_fonte ON producao (prestador_id, fonte)`);
     await db.query(`CREATE INDEX IF NOT EXISTS producao_por_convenio ON producao (prestador_id, convenio)`);
+    // Médico dentro do prestador (clínica com vários médicos: Azul, CAEM). NULL = sem médico.
+    await db.query(`ALTER TABLE producao ADD COLUMN IF NOT EXISTS medico TEXT`);
     await db.query(`CREATE TABLE IF NOT EXISTS sincronizacoes (
       prestador_id INT NOT NULL REFERENCES prestadores(id) ON DELETE CASCADE,
       convenio TEXT NOT NULL,
@@ -184,6 +186,7 @@ function prepararBanco(){
       excluido_por INT REFERENCES usuarios(id)
     )`);
     await db.query(`CREATE INDEX IF NOT EXISTS documentos_por_prestador ON documentos (prestador_id, categoria, competencia)`);
+    await db.query(`ALTER TABLE documentos ADD COLUMN IF NOT EXISTS medico TEXT NOT NULL DEFAULT ''`);
 
     // Primeiro acesso da equipe: se ainda não existe ninguém da Faturas,
     // cria a conta com ADMIN_LOGIN / ADMIN_SENHA (variáveis de ambiente).

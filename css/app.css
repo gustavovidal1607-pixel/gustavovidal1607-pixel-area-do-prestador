@@ -555,6 +555,7 @@ h3.titulo-form{margin:0 0 4px; font:600 14.5px var(--fonte-titulo);}
 .sr-only{position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap;}
 .equipe-prest .inteiro-grade{grid-column:1 / -1;}
 .lista-simples .sync{display:block; color:var(--cinza-claro); font-size:12px;}
+.chip.med{background:#F1EAFB; color:#5B3FA0;}
 .acoes-li{display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;}
 .segmento.grande{display:grid; grid-template-columns:1fr 1fr;}
 .segmento.grande button{padding:10px; font-size:14px;}

@@ -1,6 +1,7 @@
 // PDFs do portal do prestador: protocolos de envio e documentos de repasse.
 //
-//   GET    /api/documentos?acao=lista[&categoria=protocolo|repasse][&prestador=ID][&excluidos=1]
+//   GET    /api/documentos?acao=lista[&categoria=protocolo|repasse][&prestador=ID][&excluidos=1][&medico=NOME|-]
+//          (medico=NOME -> documentos desse médico + os da clínica toda; medico=- -> só os da clínica toda)
 //   GET    /api/documentos?id=ID[&baixar=1]     -> abre/baixa o PDF (nunca link público)
 //   DELETE /api/documentos?id=ID                -> exclusão lógica (só equipe; apaga o PDF, fica o registro)
 //   POST   /api/documentos?acao=editar  JSON { id, competencia?, convenio?, numero?, data_envio?, tipo?, observacao? } (só equipe)
@@ -36,8 +37,9 @@ module.exports = L.rota(async (req, res) => {
     const prestador = equipe ? (/^\d+$/.test(p.get('prestador') || '') ? Number(p.get('prestador')) : null) : u.prestador_id;
     const categoria = ['protocolo', 'repasse'].includes(p.get('categoria')) ? p.get('categoria') : null;
     const comExcluidos = equipe && p.get('excluidos') === '1';
+    const medico = (p.get('medico') || '').trim().toUpperCase() || null;
     const documentos = await db.query(
-      `SELECT d.id, d.prestador_id, pr.nome AS prestador_nome, d.categoria, d.convenio, d.competencia, d.numero,
+      `SELECT d.id, d.prestador_id, pr.nome AS prestador_nome, d.categoria, d.convenio, d.competencia, d.numero, d.medico,
               to_char(d.data_envio, 'YYYY-MM-DD') AS data_envio, d.tipo, d.observacao, d.nome_original, d.tamanho,
               d.criado_em, d.excluido_em, ue.nome AS enviado_por_nome, ux.nome AS excluido_por_nome,
               to_char(d.previsao_pagamento, 'YYYY-MM-DD') AS previsao_pagamento,
@@ -52,8 +54,9 @@ module.exports = L.rota(async (req, res) => {
         WHERE ($1::int IS NULL OR d.prestador_id = $1)
           AND ($2::text IS NULL OR d.categoria = $2)
           AND ($3::boolean OR d.excluido_em IS NULL)
+          AND ($4::text IS NULL OR d.medico = '' OR d.medico = $4)
         ORDER BY d.competencia DESC, d.convenio, d.data_envio DESC NULLS LAST, d.id DESC`,
-      [prestador, categoria, comExcluidos]
+      [prestador, categoria, comExcluidos, medico]
     );
     // O prestador não precisa ver quem da equipe subiu.
     if (!equipe) documentos.forEach(d => { delete d.enviado_por_nome; delete d.excluido_por_nome; });
@@ -98,16 +101,16 @@ module.exports = L.rota(async (req, res) => {
     const [doc] = await db.query(`SELECT *, to_char(data_envio, 'YYYY-MM-DD') AS data_envio_txt, to_char(previsao_pagamento, 'YYYY-MM-DD') AS previsao_txt FROM documentos WHERE id = $1 AND excluido_em IS NULL`, [id]);
     if (!doc) return L.responder(res, 404, { erro: 'Esse documento não existe mais.' });
     const atual = { categoria: doc.categoria, prestador_id: doc.prestador_id, competencia: doc.competencia, convenio: doc.convenio, numero: doc.numero,
-      data_envio: doc.data_envio_txt || '', tipo: doc.tipo, observacao: doc.observacao };
+      data_envio: doc.data_envio_txt || '', tipo: doc.tipo, observacao: doc.observacao, medico: doc.medico || '' };
     atual.previsao_pagamento = doc.previsao_txt || '';
-    const campos = ['competencia', 'convenio', 'numero', 'data_envio', 'tipo', 'observacao', 'previsao_pagamento'];
+    const campos = ['competencia', 'convenio', 'numero', 'data_envio', 'tipo', 'observacao', 'previsao_pagamento', 'medico'];
     const novo = { ...atual };
     campos.forEach(c => { if (corpo[c] !== undefined) novo[c] = corpo[c]; });
     const meta = await conferirMeta(db, novo);
     if (meta.erro) return L.responder(res, 400, { erro: meta.erro });
     await db.query(
-      `UPDATE documentos SET competencia = $2, convenio = $3, numero = $4, data_envio = $5::date, tipo = $6, observacao = $7, previsao_pagamento = $8::date WHERE id = $1`,
-      [id, meta.competencia, meta.convenio, meta.numero, meta.data_envio, meta.tipo, meta.observacao, meta.previsao_pagamento]
+      `UPDATE documentos SET competencia = $2, convenio = $3, numero = $4, data_envio = $5::date, tipo = $6, observacao = $7, previsao_pagamento = $8::date, medico = $9 WHERE id = $1`,
+      [id, meta.competencia, meta.convenio, meta.numero, meta.data_envio, meta.tipo, meta.observacao, meta.previsao_pagamento, meta.medico]
     );
     return L.responder(res, 200, { ok: true });
   }
@@ -165,7 +168,8 @@ async function conferirMeta(db, x){
   const previsao = String(x.previsao_pagamento || '');
   if (previsao && !/^\d{4}-\d{2}-\d{2}$/.test(previsao)) return { erro: 'Previsão de pagamento inválida.' };
   return { categoria, prestador_id, competencia, convenio, numero, data_envio: data_envio || null, tipo, observacao: String(x.observacao || '').trim().slice(0, 500),
-    previsao_pagamento: categoria === 'protocolo' && previsao ? previsao : null };
+    previsao_pagamento: categoria === 'protocolo' && previsao ? previsao : null,
+    medico: String(x.medico || '').trim().toUpperCase().slice(0, 120) };
 }
 
 // Protocolo com convênio genérico "BRADESCO": tenta achar se é Saúde ou
@@ -190,9 +194,9 @@ async function gravar(db, u, m, arquivo){
     if (x) m.competencia = x.competencia;
   }
   const [d] = await db.query(
-    `INSERT INTO documentos (prestador_id, categoria, convenio, competencia, numero, data_envio, tipo, observacao, nome_original, tamanho, chave, enviado_por, previsao_pagamento)
-     VALUES ($1, $2, $3, $4, $5, $6::date, $7, $8, $9, $10, $11, $12, $13::date) RETURNING id`,
-    [m.prestador_id, m.categoria, m.convenio, m.competencia, m.numero, m.data_envio, m.tipo, m.observacao, arquivo.nome, arquivo.tamanho, arquivo.chave, u.id, m.previsao_pagamento]
+    `INSERT INTO documentos (prestador_id, categoria, convenio, competencia, numero, data_envio, tipo, observacao, nome_original, tamanho, chave, enviado_por, previsao_pagamento, medico)
+     VALUES ($1, $2, $3, $4, $5, $6::date, $7, $8, $9, $10, $11, $12, $13::date, $14) RETURNING id`,
+    [m.prestador_id, m.categoria, m.convenio, m.competencia, m.numero, m.data_envio, m.tipo, m.observacao, arquivo.nome, arquivo.tamanho, arquivo.chave, u.id, m.previsao_pagamento, m.medico]
   );
   return d.id;
 }

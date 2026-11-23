@@ -71,7 +71,7 @@ module.exports = L.rota(async (req, res) => {
   });
 
   const colunas = ['previsao_pagamento', 'convenio', 'operadora', 'competencia', 'lote', 'data_lote', 'tipo', 'tipo_original', 'paciente', 'guia', 'data', 'grau',
-    'codigo', 'procedimento', 'qtd', 'faturado', 'recebido', 'glosado', 'data_pagamento', 'status', 'situacao', 'motivo_glosa'];
+    'codigo', 'procedimento', 'qtd', 'faturado', 'recebido', 'glosado', 'data_pagamento', 'status', 'situacao', 'motivo_glosa', 'medico'];
   const tipos = { previsao_pagamento: 'date', data_lote: 'date', data: 'date', data_pagamento: 'date', qtd: 'numeric', faturado: 'numeric', recebido: 'numeric', glosado: 'numeric' };
   const definicao = colunas.map(c => `${c} ${tipos[c] || 'text'}`).join(', ');
   const modificado = /^\d{4}-\d{2}-\d{2}T/.test(String(corpo.arquivo_modificado || '')) ? corpo.arquivo_modificado : null;
@@ -229,5 +229,7 @@ function normalizar(x, fonte){
     // (comp_planilha, quando vier, é só informativo: a competência já vem calculada)
     situacao: situacao(faturado, recebido, glosado),
     motivo_glosa: texto(x.motivo_glosa, 500),
+    // Médico (clínica com vários): coluna MÉDICO ou pasta do médico; vazio = sem médico.
+    medico: (texto(x.medico, 120) || '').toUpperCase() || null,
   };
 }

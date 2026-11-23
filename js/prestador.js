@@ -33,17 +33,20 @@
   // Estado da Área do Prestador (zera a cada login).
   let P = null;
   function novoEstado(){
-    return { usuario: CF().estado.usuario.id, painel: null, atualizado: null, comp: null, convenio: '', faturas: {}, filtroSit: '', busca: '', docs: {} };
+    return { usuario: CF().estado.usuario.id, painel: null, atualizado: null, comp: null, convenio: '', faturas: {}, filtroSit: '', busca: '', docs: {},
+      medico: '', medicos: [], semMedico: false, aba: 'painel' };
   }
 
   // ================================================================ PORTAL DO PRESTADOR
   async function portal(caixa, aba){
     if (!P || P.usuario !== CF().estado.usuario.id) P = novoEstado();
+    P.aba = aba || 'painel';
     caixa.innerHTML = `<div class="portal" id="portal"><div class="carregando">Carregando…</div></div>`;
     try {
       if (!P.painel){
-        const r = await CF().api('/api/prestador?acao=painel');
+        const r = await CF().api(`/api/prestador?acao=painel${qMedico()}`);
         P.painel = r.linhas; P.atualizado = r.atualizado_em; P.proximos = r.proximos || []; P.hoje = r.hoje;
+        P.medicos = r.medicos || []; P.semMedico = !!r.sem_medico;
         const comps = competencias();
         if (P.comp === null) P.comp = comps[0] || '';
       }
@@ -64,6 +67,25 @@
     return t;
   }
 
+  // Médico dentro da clínica (Azul, CAEM…): '' = tudo junto, '-' = sem médico, NOME = só ele.
+  const qMedico = () => P.medico ? `&medico=${encodeURIComponent(P.medico)}` : '';
+  const nomeMedico = m => m === '-' ? 'Sem médico informado' : (m || 'Todos os médicos');
+  function seletorMedico(id){
+    if (!P.medicos.length) return '';
+    return `
+        <label class="campo"><span>Médico</span>
+          <select id="${id}">
+            <option value="" ${P.medico === '' ? 'selected' : ''}>Todos (clínica inteira)</option>
+            ${P.medicos.map(m => `<option value="${h(m)}" ${m === P.medico ? 'selected' : ''}>${h(m)}</option>`).join('')}
+            ${P.semMedico ? `<option value="-" ${P.medico === '-' ? 'selected' : ''}>Sem médico informado</option>` : ''}
+          </select>
+        </label>`;
+  }
+  function trocarMedico(v){
+    P.medico = v; P.painel = null; P.faturas = {}; P.docs = {};
+    CF().irParaAba(P.aba);
+  }
+
   function filtros({ todas = true, resumo = true } = {}){
     const comps = competencias();
     return `
@@ -80,6 +102,7 @@
             ${conveniosDoPainel().map(c => `<option value="${h(c)}" ${c === P.convenio ? 'selected' : ''}>${h(c)}</option>`).join('')}
           </select>
         </label>
+        ${seletorMedico('f-med')}
         ${resumo ? `<button type="button" class="botao primario" id="btn-resumo">Gerar resumo</button>` : ''}
       </div>`;
   }
@@ -87,8 +110,10 @@
   function ligarFiltros(aoMudar){
     $('#f-comp').onchange = ev => { P.comp = ev.target.value; aoMudar(); };
     $('#f-conv').onchange = ev => { P.convenio = ev.target.value; aoMudar(); };
+    const fm = $('#f-med');
+    if (fm) fm.onchange = ev => trocarMedico(ev.target.value);
     const b = $('#btn-resumo');
-    if (b) b.onclick = () => abrirResumo(P.comp || competencias()[0]);
+    if (b) b.onclick = () => abrirResumo(P.comp || competencias()[0], undefined, true, P.medico);
   }
 
   function cabecalho(titulo, sub, extra){
@@ -114,7 +139,7 @@
     const t = somar(sel);
     const atualizado = P.atualizado ? `Atualizado em ${h(CF().quandoBR(P.atualizado))}.` : '';
     caixa.innerHTML = `
-      ${cabecalho('Painel', `${h(compNome(P.comp))}${P.convenio ? ' · ' + h(P.convenio) : ''}. ${atualizado}`, filtros())}
+      ${cabecalho('Painel', `${h(compNome(P.comp))}${P.convenio ? ' · ' + h(P.convenio) : ''}${P.medico ? ' · ' + h(nomeMedico(P.medico)) : ''}. ${atualizado}`, filtros())}
       <div class="cartoes">
         ${cartao('Faturado', dinheiro(t.faturado), `${t.guias} guia${t.guias === 1 ? '' : 's'}`, 'faturado')}
         ${cartao('Recebido', dinheiro(t.recebido), t.faturado ? `${pct(t.recebido / t.faturado * 100)} do faturado` : '', 'recebido')}
@@ -351,7 +376,7 @@
     $('#fat-busca').oninput = ev => { P.busca = ev.target.value; listaFaturas(); };
     const chave = P.comp;
     try {
-      if (!P.faturas[chave]) P.faturas[chave] = (await CF().api(`/api/prestador?acao=faturas&mes=${chave}`)).linhas;
+      if (!P.faturas[chave]) P.faturas[chave] = (await CF().api(`/api/prestador?acao=faturas&mes=${chave}${qMedico()}`)).linhas;
     } catch (e){ $('#fat-lista').innerHTML = `<div class="vazio"><strong>Não deu para carregar</strong>${h(e.message)}</div>`; return; }
     if (P.comp === chave) listaFaturas();
   }
@@ -403,7 +428,7 @@
             <tbody>
               ${g.linhas.map(l => `
                 <tr>
-                  <th scope="row" class="c-pac" data-r="">${h(l.paciente || '—')}</th>
+                  <th scope="row" class="c-pac" data-r="">${h(l.paciente || '—')}${l.medico && !P.medico ? `<small class="quando bloco">${h(l.medico)}</small>` : ''}</th>
                   <td class="mono" data-r="Guia">${h(l.guia || '—')}</td>
                   <td class="mono" data-r="Data">${dataBR(l.data)}</td>
                   <td data-r="Tipo">${h(tipoNome(l.tipo))}${l.grau && l.grau !== '00' ? ` <small class="quando">grau ${h(l.grau)}</small>` : ''}</td>
@@ -474,7 +499,7 @@
       : 'Relatórios de repasse e espelhos de pagamento.';
     caixa.innerHTML = cabecalho(titulo, sub) + `<div id="docs"><div class="carregando">Carregando…</div></div>`;
     try {
-      if (!P.docs[categoria]) P.docs[categoria] = (await CF().api(`/api/documentos?acao=lista&categoria=${categoria}`)).documentos;
+      if (!P.docs[categoria]) P.docs[categoria] = (await CF().api(`/api/documentos?acao=lista&categoria=${categoria}${qMedico()}`)).documentos;
     } catch (e){ $('#docs').innerHTML = `<div class="vazio"><strong>Não deu para carregar</strong>${h(e.message)}</div>`; return; }
     const docs = P.docs[categoria];
     const comps = Array.from(new Set(docs.map(d => d.competencia))).sort().reverse();
@@ -495,10 +520,12 @@
       <div class="filtros-portal">
         <label class="campo"><span>Competência</span><select id="d-comp"><option value="">Todas</option>${comps.map(c => `<option value="${c}" ${filtroDoc.comp === c ? 'selected' : ''}>${compBR(c)}</option>`).join('')}</select></label>
         ${convs.length ? `<label class="campo"><span>Convênio</span><select id="d-conv"><option value="">Todos</option>${convs.map(c => `<option ${filtroDoc.conv === c ? 'selected' : ''}>${h(c)}</option>`).join('')}</select></label>` : ''}
+        ${seletorMedico('d-med')}
       </div>
       <div id="docs-lista"></div>`;
     $('#d-comp').onchange = ev => { filtroDoc.comp = ev.target.value; desenhar(); };
     if ($('#d-conv')) $('#d-conv').onchange = ev => { filtroDoc.conv = ev.target.value; desenhar(); };
+    if ($('#d-med')) $('#d-med').onchange = ev => trocarMedico(ev.target.value);
     desenhar();
   }
 
@@ -508,6 +535,7 @@
       : h(d.tipo || 'Documento');
     const meta = [
       d.convenio ? `<span class="chip conv">${h(d.convenio)}</span>` : '',
+      d.medico ? `<span class="chip med">${h(d.medico)}</span>` : '',
       d.data_envio ? `<span>${d.categoria === 'protocolo' ? 'enviado em' : 'de'} ${dataBR(d.data_envio)}</span>` : '',
       d.categoria === 'protocolo' ? (d.lote_pago ? '<span class="sit pago">pago</span>'
         : d.previsao ? `<span class="previsao">previsão de pagamento <b>${dataBR(d.previsao)}</b></span>` : '<span class="quando">sem previsão de pagamento</span>') : '',
@@ -536,7 +564,7 @@
   // "RESUMO <MM-AAAA> - <PRESTADOR>.pdf": página(s) do resumo + todos os PDFs
   // de protocolo da competência (ordem convênio -> data de envio), montado no
   // navegador com pdf-lib (js/vendor/pdf-lib.min.js, carregado só aqui).
-  async function abrirResumo(comp, prestadorId, baixar = true){
+  async function abrirResumo(comp, prestadorId, baixar = true, medico = ''){
     const tela = $('#resumo');
     const comps = P && P.painel && !prestadorId ? competencias() : [comp];
     tela.hidden = false;
@@ -544,7 +572,7 @@
     tela.innerHTML = `<div class="resumo-barra"><span>Carregando o resumo…</span></div>`;
     let r, protocolos;
     try {
-      const q = prestadorId ? `&prestador=${prestadorId}` : '';
+      const q = (prestadorId ? `&prestador=${prestadorId}` : '') + (medico ? `&medico=${encodeURIComponent(medico)}` : '');
       const [res, docs] = await Promise.all([
         CF().api(`/api/prestador?acao=resumo&mes=${comp}${q}`),
         CF().api(`/api/documentos?acao=lista&categoria=protocolo${q}`),
@@ -560,6 +588,14 @@
         <label class="campo"><span>Competência</span>
           <select id="r-comp">${comps.map(c => `<option value="${c}" ${c === comp ? 'selected' : ''}>${compBR(c)}</option>`).join('')}</select>
         </label>
+        ${r.medicos && r.medicos.length ? `
+        <label class="campo"><span>Médico</span>
+          <select id="r-med">
+            <option value="" ${!medico ? 'selected' : ''}>Todos (clínica inteira)</option>
+            ${r.medicos.map(m => `<option value="${h(m)}" ${m === medico ? 'selected' : ''}>${h(m)}</option>`).join('')}
+            ${r.sem_medico ? `<option value="-" ${medico === '-' ? 'selected' : ''}>Sem médico informado</option>` : ''}
+          </select>
+        </label>` : ''}
         <div class="resumo-botoes">
           <button type="button" class="botao primario" id="r-baixar">Baixar PDF</button>
           <button type="button" class="botao fantasma" id="r-fechar">Fechar</button>
@@ -572,6 +608,7 @@
           <div class="folha-titulo">
             <h1>Resumo de faturamento</h1>
             <p><span>Prestador</span><strong>${h(r.prestador.nome)}</strong></p>
+            ${medico ? `<p><span>Médico</span><strong>${h(nomeMedico(medico))}</strong></p>` : ''}
             <p><span>Competência</span><strong>${compBR(r.mes)}</strong></p>
           </div>
         </header>
@@ -587,6 +624,14 @@
               </table>
             </section>`;
         }).join('') : `<p class="folha-vazio">Nada faturado nesta competência.</p>`}
+        ${r.por_medico && r.por_medico.length > 1 ? `
+            <section class="folha-conv">
+              <h2>Por médico</h2>
+              <table>
+                <thead><tr><th>Médico</th><th class="n">Guias</th><th class="n">Valor faturado</th></tr></thead>
+                <tbody>${r.por_medico.map(g => `<tr><td>${h(g.medico || 'Sem médico informado')}</td><td class="n">${g.guias}</td><td class="n">${dinheiro(g.faturado)}</td></tr>`).join('')}</tbody>
+              </table>
+            </section>` : ''}
         <div class="folha-total">
           <span>Total geral · ${total.guias} guia${total.guias === 1 ? '' : 's'}</span>
           <strong>${dinheiro(total.faturado)}</strong>
@@ -599,7 +644,7 @@
       botao.disabled = true;
       try {
         const { bytes, paginas, falhas } = await gerarPdfResumo(r, protocolos, t => { status.textContent = t; });
-        const nome = `RESUMO ${compBR(r.mes).replace('/', '-')} - ${r.prestador.nome}.pdf`;
+        const nome = `RESUMO ${compBR(r.mes).replace('/', '-')} - ${r.prestador.nome}${medico && medico !== '-' ? ' - ' + medico : ''}.pdf`;
         const a = document.createElement('a');
         a.href = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
         a.download = nome;
@@ -614,7 +659,8 @@
     };
     $('#r-fechar').onclick = fecharResumo;
     botao.onclick = gerar;
-    $('#r-comp').onchange = ev => abrirResumo(ev.target.value, prestadorId, false);
+    $('#r-comp').onchange = ev => abrirResumo(ev.target.value, prestadorId, false, medico);
+    if ($('#r-med')) $('#r-med').onchange = ev => abrirResumo(comp, prestadorId, false, ev.target.value);
     tela.scrollTop = 0;
     botao.focus();
     if (baixar) gerar();
@@ -668,7 +714,8 @@
     await carregarPdfLib();
     const { PDFDocument, StandardFonts, rgb } = window.PDFLib;
     const doc = await PDFDocument.create();
-    doc.setTitle(`Resumo de faturamento ${compBR(r.mes)} - ${r.prestador.nome}`);
+    const medicoPdf = r.medico ? nomeMedico(r.medico) : '';
+    doc.setTitle(`Resumo de faturamento ${compBR(r.mes)} - ${r.prestador.nome}${medicoPdf ? ' - ' + medicoPdf : ''}`);
     doc.setAuthor('Faturas Med');
     const fonte = await doc.embedFont(StandardFonts.Helvetica);
     const negrito = await doc.embedFont(StandardFonts.HelveticaBold);
@@ -711,10 +758,10 @@
           texto(rot, W - M - wv - 8, yy, { tam: 8, c: CINZA, alinhar: 'dir' });
         };
         linhaCab('PRESTADOR', r.prestador.nome, y - 32);
-        linhaCab('COMPETÊNCIA', compBR(r.mes), y - 47);
-        y -= 62;
+        if (medicoPdf){ linhaCab('MÉDICO', medicoPdf, y - 47); linhaCab('COMPETÊNCIA', compBR(r.mes), y - 62); y -= 77; }
+        else { linhaCab('COMPETÊNCIA', compBR(r.mes), y - 47); y -= 62; }
       } else {
-        texto(`Resumo de faturamento · ${r.prestador.nome} · ${compBR(r.mes)}`, M, y - 10, { f: negrito, tam: 10, c: AZUL });
+        texto(`Resumo de faturamento · ${r.prestador.nome}${medicoPdf ? ' · ' + medicoPdf : ''} · ${compBR(r.mes)}`, M, y - 10, { f: negrito, tam: 10, c: AZUL });
         y -= 20;
       }
       pagina.drawRectangle({ x: M, y, width: W - 2 * M, height: 2.5, color: AZUL });
@@ -748,6 +795,24 @@
       texto(String(st.guias), xGuias, y, { f: negrito, alinhar: 'dir' });
       texto(dinheiro(st.faturado), xValor, y, { f: negrito, alinhar: 'dir' });
       y -= 30;
+    }
+    if (r.por_medico && r.por_medico.length > 1){
+      espaco(22 + 18 + 18 * (r.por_medico.length + 1) + 14);
+      pagina.drawRectangle({ x: M, y: y - 16, width: W - 2 * M, height: 22, color: CLARO });
+      pagina.drawRectangle({ x: M, y: y - 16, width: 4, height: 22, color: AZUL });
+      texto('POR MÉDICO', M + 12, y - 9, { f: negrito, tam: 11 });
+      y -= 32;
+      texto('MÉDICO', M + 8, y, { f: negrito, tam: 7.5, c: CINZA });
+      texto('GUIAS', xGuias, y, { f: negrito, tam: 7.5, c: CINZA, alinhar: 'dir' });
+      texto('VALOR FATURADO', xValor, y, { f: negrito, tam: 7.5, c: CINZA, alinhar: 'dir' });
+      y -= 6; pagina.drawLine({ start: { x: M, y }, end: { x: W - M, y }, thickness: 0.8, color: LINHA }); y -= 13;
+      for (const g of r.por_medico){
+        texto(g.medico || 'Sem médico informado', M + 8, y);
+        texto(String(g.guias), xGuias, y, { alinhar: 'dir' });
+        texto(dinheiro(g.faturado), xValor, y, { alinhar: 'dir' });
+        y -= 6; pagina.drawLine({ start: { x: M, y }, end: { x: W - M, y }, thickness: 0.5, color: FINA }); y -= 13;
+      }
+      y -= 12;
     }
     espaco(50);
     const total = somaResumo(r.grupos);
@@ -822,6 +887,10 @@
             </div>
             <label class="campo"><span>Prestador</span>
               <select name="prestador_id" required>${ativos.map(p => `<option value="${p.id}">${h(p.nome)}</option>`).join('') || '<option value="">Cadastre um prestador</option>'}</select>
+            </label>
+            <label class="campo" id="campo-medico" hidden><span>Médico <small>(clínica com vários)</small></span>
+              <select name="medico"><option value="">Clínica inteira</option></select>
+              <small>Documento de um médico só aparece para ele; da clínica inteira aparece para todos.</small>
             </label>
             <label class="campo"><span>Competência</span>
               <input name="competencia" inputmode="numeric" placeholder="MM/AAAA" maxlength="7" autocomplete="off" required>
@@ -905,6 +974,15 @@
 
     // ---- formulário do documento
     const f = $('#form-doc');
+    // Médico: só aparece quando o prestador escolhido tem médicos nas planilhas.
+    const atualizarMedicos = () => {
+      const pr = E.admin.prestadores.find(x => String(x.id) === f.prestador_id.value);
+      const ms = (pr && pr.medicos) || [];
+      $('#campo-medico').hidden = !ms.length;
+      f.medico.innerHTML = `<option value="">Clínica inteira</option>` + ms.map(m => `<option>${h(m)}</option>`).join('');
+    };
+    atualizarMedicos();
+    f.prestador_id.addEventListener('change', atualizarMedicos);
     let arquivo = null;
     const ajustar = () => {
       $$('[data-cat]', f).forEach(b => b.setAttribute('aria-pressed', String(b.dataset.cat === E.categoria)));
@@ -976,6 +1054,7 @@
         numero: E.categoria === 'protocolo' ? f.numero.value.trim() : '', data_envio: E.categoria === 'protocolo' ? f.data_envio.value : '',
         tipo: E.categoria === 'repasse' ? f.tipo.value : '', observacao: f.observacao.value.trim(),
         previsao_pagamento: E.categoria === 'protocolo' ? f.previsao_pagamento.value : '',
+        medico: $('#campo-medico').hidden ? '' : f.medico.value,
       };
       if (meta.categoria === 'protocolo' && (!meta.convenio || !meta.numero || !meta.data_envio)){
         erro.textContent = 'Protocolo precisa de convênio, número e data de envio.'; return;
@@ -1032,11 +1111,15 @@
       const dlg = $('#dialogo');
       const convs = E.admin.convenios_prestador.slice();
       if (d.convenio && !convs.includes(d.convenio)) convs.unshift(d.convenio);
+      const prDoc = E.admin.prestadores.find(x => x.id === d.prestador_id);
+      const medicosDoc = ((prDoc && prDoc.medicos) || []).slice();
+      if (d.medico && !medicosDoc.includes(d.medico)) medicosDoc.unshift(d.medico);
       dlg.innerHTML = `
         <form id="form-editar-doc">
           <h2>Editar ${d.categoria === 'protocolo' ? 'protocolo' : 'documento'}</h2>
           <p>${h(d.nome_original)}</p>
           <label class="campo"><span>Convênio</span><select name="convenio"><option value="">—</option>${convs.map(c => `<option ${c === d.convenio ? 'selected' : ''}>${h(c)}</option>`).join('')}</select></label>
+          ${medicosDoc.length ? `<label class="campo"><span>Médico</span><select name="medico"><option value="">Clínica inteira</option>${medicosDoc.map(m => `<option ${m === d.medico ? 'selected' : ''}>${h(m)}</option>`).join('')}</select></label>` : ''}
           ${d.categoria === 'protocolo' ? `
             <label class="campo"><span>Número do protocolo</span><input name="numero" value="${h(d.numero)}"></label>
             <label class="campo"><span>Data de envio</span><input name="data_envio" type="date" value="${h(d.data_envio || '')}"></label>
@@ -1059,6 +1142,7 @@
         const m = f.competencia.value.trim().match(/^(0[1-9]|1[0-2])\/(\d{4})$/);
         if (!m){ $('.erro', f).textContent = 'Competência como MM/AAAA.'; return; }
         const corpo = { id: d.id, convenio: f.convenio.value, competencia: `${m[2]}-${m[1]}`, observacao: f.observacao.value };
+        if (f.medico) corpo.medico = f.medico.value;
         if (f.numero){ corpo.numero = f.numero.value; corpo.data_envio = f.data_envio.value; corpo.previsao_pagamento = f.previsao_pagamento.value; }
         try { await CF().api('/api/documentos?acao=editar', { method: 'POST', body: JSON.stringify(corpo) }); salvo = true; dlg.close(); }
         catch (e){ $('.erro', f).textContent = e.message; }
