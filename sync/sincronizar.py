@@ -426,8 +426,24 @@ class Portal:
         except Exception:
             pass
 
+    LIMITE_PARTE = 2_500_000   # bytes de JSON por requisição (a Vercel aceita 4,5 MB)
+    LINHAS_PARTE = 15000
+
     def sincronizar(self, pacote):
-        return self._post("/api/sync", pacote)
+        """Manda o pacote; se for grande, em partes (o portal só troca tudo na última)."""
+        corpo = json.dumps(pacote, ensure_ascii=False).encode("utf-8")
+        linhas = pacote["linhas"]
+        n = max(-(-len(corpo) // self.LIMITE_PARTE), -(-len(linhas) // self.LINHAS_PARTE), 1)
+        if n == 1:
+            return self._post("/api/sync", pacote)
+        envio = "sync-" + dt.datetime.now().strftime("%Y%m%d%H%M%S") + "-" + os.urandom(4).hex()
+        tamanho = -(-len(linhas) // n)
+        resposta = None
+        for i in range(n):
+            parte = dict(pacote, linhas=linhas[i * tamanho:(i + 1) * tamanho], envio=envio, parte=i + 1, partes=n)
+            resposta = self._post("/api/sync", parte)
+        resposta["partes"] = n
+        return resposta
 
 
 def main():
@@ -507,7 +523,7 @@ def main():
                 continue
             try:
                 r = portal.sincronizar(pacote)
-                print(f"    -> portal: {r.get('linhas')} linhas gravadas" + (f", {r.get('ignoradas')} ignoradas" if r.get("ignoradas") else ""))
+                print(f"    -> portal: {r.get('linhas')} linhas gravadas" + (f" (em {r.get('partes')} partes)" if r.get("partes") else "") + (f", {r.get('ignoradas')} ignoradas" if r.get("ignoradas") else ""))
             except Exception as e:
                 print(f"  ! {convenio}: envio falhou: {e}", file=sys.stderr)
                 falhas += 1

@@ -151,6 +151,17 @@ function prepararBanco(){
       quando TIMESTAMPTZ NOT NULL DEFAULT now(),
       PRIMARY KEY (prestador_id, convenio)
     )`);
+    // Envio grande da sincronização chega em partes (limite de 4,5 MB por
+    // requisição na Vercel); as partes ficam aqui até a última montar tudo.
+    await db.query(`CREATE TABLE IF NOT EXISTS sync_partes (
+      envio TEXT NOT NULL,
+      parte INT NOT NULL,
+      prestador_id INT NOT NULL REFERENCES prestadores(id) ON DELETE CASCADE,
+      fonte TEXT NOT NULL,
+      linhas JSONB NOT NULL,
+      criado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (envio, parte)
+    )`);
     // PDFs do prestador: protocolos de envio e documentos de repasse.
     // Excluir não apaga a linha (fica quem excluiu e quando), só o PDF.
     await db.query(`CREATE TABLE IF NOT EXISTS documentos (

@@ -10,6 +10,10 @@
 // transação: ou entra a planilha inteira, ou nada muda). O prestador
 // precisa estar cadastrado pela equipe (aba Prestadores).
 //
+// Planilha grande (a Vercel aceita 4,5 MB por requisição): o script manda em
+// partes, { envio: <id>, parte: i, partes: n, linhas: [...] }. As partes ficam
+// em sync_partes e só a última troca a produção, numa transação só.
+//
 // Autorização: sessão de um usuário da EQUIPE (login normal, perfil faturas)
 // OU cabeçalho X-Sync-Token igual à variável SYNC_TOKEN (opcional; no modo
 // local sem variável aceita "teste"). Prestador e recepção não sincronizam.
@@ -72,11 +76,16 @@ module.exports = L.rota(async (req, res) => {
   const definicao = colunas.map(c => `${c} ${tipos[c] || 'text'}`).join(', ');
   const modificado = /^\d{4}-\d{2}-\d{2}T/.test(String(corpo.arquivo_modificado || '')) ? corpo.arquivo_modificado : null;
 
-  await db.transacao([
-    [`DELETE FROM producao WHERE prestador_id = $1 AND fonte = $2`, [prestador.id, convenio]],
-    [`INSERT INTO producao (prestador_id, fonte, ${colunas.join(', ')})
-      SELECT $1, $2, ${colunas.join(', ')} FROM json_to_recordset($3::json) AS x(${definicao})`,
-      [prestador.id, convenio, JSON.stringify(linhas)]],
+  // Envio em partes?
+  const partes = Number(corpo.partes || 1);
+  const parte = Number(corpo.parte || 1);
+  const envio = String(corpo.envio || '');
+  if (partes > 1){
+    if (!Number.isInteger(partes) || !Number.isInteger(parte) || parte < 1 || parte > partes || partes > 500) return L.responder(res, 400, { erro: 'Parte inválida.' });
+    if (!/^[A-Za-z0-9_-]{8,64}$/.test(envio)) return L.responder(res, 400, { erro: 'Informe o id do envio (envio).' });
+  }
+  const insercao = (origem) => `INSERT INTO producao (prestador_id, fonte, ${colunas.join(', ')}) ${origem}`;
+  const fechamento = [
     // Protocolo cujo número é um lote desta planilha segue o lote: convênio
     // (ex.: "BRADESCO" genérico -> BRADESCO SAÚDE/OPERADORA) e competência
     // (a mesma calculada para o lote), para o resumo anexar o protocolo certo.
@@ -88,13 +97,44 @@ module.exports = L.rota(async (req, res) => {
          AND (d.convenio <> x.convenio OR d.competencia <> x.competencia)`,
       [prestador.id, convenio]],
     [`INSERT INTO sincronizacoes (prestador_id, convenio, linhas, arquivo, arquivo_modificado, quando)
-      VALUES ($1, $2, $3, $4, $5::timestamptz, now())
+      VALUES ($1, $2, (SELECT count(*) FROM producao WHERE prestador_id = $1 AND fonte = $2), $3, $4::timestamptz, now())
       ON CONFLICT (prestador_id, convenio) DO UPDATE SET linhas = EXCLUDED.linhas, arquivo = EXCLUDED.arquivo,
         arquivo_modificado = EXCLUDED.arquivo_modificado, quando = now()`,
-      [prestador.id, convenio, linhas.length, String(corpo.arquivo || '').slice(0, 300), modificado]],
-  ]);
+      [prestador.id, convenio, String(corpo.arquivo || '').slice(0, 300), modificado]],
+  ];
 
-  return L.responder(res, 200, { ok: true, prestador: nomePrestador, convenio, linhas: linhas.length, ignoradas: avisos.length, avisos: avisos.slice(0, 50) });
+  if (partes === 1){
+    await db.transacao([
+      [`DELETE FROM producao WHERE prestador_id = $1 AND fonte = $2`, [prestador.id, convenio]],
+      [insercao(`SELECT $1, $2, ${colunas.join(', ')} FROM json_to_recordset($3::json) AS x(${definicao})`),
+        [prestador.id, convenio, JSON.stringify(linhas)]],
+      ...fechamento,
+    ]);
+    return L.responder(res, 200, { ok: true, prestador: nomePrestador, convenio, linhas: linhas.length, ignoradas: avisos.length, avisos: avisos.slice(0, 50) });
+  }
+
+  // Parte de um envio grande: guarda. Partes velhas (envio que não terminou) são limpas.
+  await db.query(`DELETE FROM sync_partes WHERE criado_em < now() - interval '1 day'`);
+  await db.query(
+    `INSERT INTO sync_partes (envio, parte, prestador_id, fonte, linhas) VALUES ($1, $2, $3, $4, $5::jsonb)
+     ON CONFLICT (envio, parte) DO UPDATE SET linhas = EXCLUDED.linhas, prestador_id = EXCLUDED.prestador_id, fonte = EXCLUDED.fonte, criado_em = now()`,
+    [envio, parte, prestador.id, convenio, JSON.stringify(linhas)]
+  );
+  if (parte < partes) return L.responder(res, 200, { ok: true, prestador: nomePrestador, convenio, parte, partes, linhas: linhas.length, ignoradas: avisos.length, avisos: avisos.slice(0, 50) });
+
+  const [{ n }] = await db.query(`SELECT count(*)::int AS n FROM sync_partes WHERE envio = $1 AND prestador_id = $2 AND fonte = $3`, [envio, prestador.id, convenio]);
+  if (n !== partes) return L.responder(res, 409, { erro: `Chegaram ${n} de ${partes} partes do envio. Mande de novo.` });
+  await db.transacao([
+    [`DELETE FROM producao WHERE prestador_id = $1 AND fonte = $2`, [prestador.id, convenio]],
+    [insercao(`SELECT $1, $2, ${colunas.join(', ')} FROM sync_partes sp
+        CROSS JOIN LATERAL jsonb_to_recordset(sp.linhas) AS x(${definicao})
+        WHERE sp.envio = $3 AND sp.prestador_id = $1 AND sp.fonte = $2 ORDER BY sp.parte`),
+      [prestador.id, convenio, envio]],
+    ...fechamento,
+    [`DELETE FROM sync_partes WHERE envio = $1`, [envio]],
+  ]);
+  const [{ n: gravadas }] = await db.query(`SELECT count(*)::int AS n FROM producao WHERE prestador_id = $1 AND fonte = $2`, [prestador.id, convenio]);
+  return L.responder(res, 200, { ok: true, prestador: nomePrestador, convenio, parte, partes, linhas: gravadas, ignoradas: avisos.length, avisos: avisos.slice(0, 50) });
 });
 
 // ---------------------------------------------------------------- normalização
