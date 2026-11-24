@@ -1,6 +1,7 @@
-// PDFs do portal do prestador: protocolos de envio e documentos de repasse.
+// PDFs do portal do prestador: protocolos de envio, documentos de repasse e
+// espelhos/demonstrativos de pagamento (categoria espelho, sync/importar_espelhos.py).
 //
-//   GET    /api/documentos?acao=lista[&categoria=protocolo|repasse][&prestador=ID][&excluidos=1][&medico=NOME|-]
+//   GET    /api/documentos?acao=lista[&categoria=protocolo|repasse|espelho][&prestador=ID][&excluidos=1][&medico=NOME|-]
 //          (medico=NOME -> documentos desse médico + os da clínica toda; medico=- -> só os da clínica toda)
 //   GET    /api/documentos?id=ID[&baixar=1]     -> abre/baixa o PDF (nunca link público)
 //   DELETE /api/documentos?id=ID                -> exclusão lógica (só equipe; apaga o PDF, fica o registro)
@@ -43,7 +44,7 @@ module.exports = L.rota(async (req, res) => {
       return L.responder(res, 403, { erro: 'Você só pode ver os seus próprios documentos.' });
     }
     const prestador = equipe ? (/^\d+$/.test(p.get('prestador') || '') ? Number(p.get('prestador')) : null) : u.prestador_id;
-    const categoria = ['protocolo', 'repasse'].includes(p.get('categoria')) ? p.get('categoria') : null;
+    const categoria = ['protocolo', 'repasse', 'espelho'].includes(p.get('categoria')) ? p.get('categoria') : null;
     const comExcluidos = equipe && p.get('excluidos') === '1';
     const medico = (p.get('medico') || '').trim().toUpperCase() || null;
     const documentos = await db.query(
@@ -158,7 +159,7 @@ module.exports = L.rota(async (req, res) => {
 
 async function conferirMeta(db, x){
   const categoria = x.categoria;
-  if (categoria !== 'protocolo' && categoria !== 'repasse') return { erro: 'Escolha se é protocolo ou documento de repasse.' };
+  if (!['protocolo', 'repasse', 'espelho'].includes(categoria)) return { erro: 'Escolha se é protocolo, documento de repasse ou espelho de pagamento.' };
   const prestador_id = Number(x.prestador_id);
   const [p] = Number.isInteger(prestador_id) && prestador_id > 0 ? await db.query(`SELECT id FROM prestadores WHERE id = $1`, [prestador_id]) : [];
   if (!p) return { erro: 'Escolha o prestador.' };
@@ -166,6 +167,7 @@ async function conferirMeta(db, x){
   if (!L.ehCompetencia(competencia)) return { erro: 'Digite a competência (mês/ano).' };
   const convenio = String(x.convenio || '').trim().toUpperCase().slice(0, 60);
   if (categoria === 'protocolo' && !convenio) return { erro: 'Escolha o convênio do protocolo.' };
+  if (categoria === 'espelho' && !convenio) return { erro: 'Escolha o convênio do espelho de pagamento.' };
   const numero = String(x.numero || '').trim().slice(0, 60);
   if (categoria === 'protocolo' && !numero) return { erro: 'Digite o número do protocolo.' };
   const data_envio = String(x.data_envio || '');

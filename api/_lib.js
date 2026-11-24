@@ -171,12 +171,13 @@ function prepararBanco(){
       criado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
       PRIMARY KEY (envio, parte)
     )`);
-    // PDFs do prestador: protocolos de envio e documentos de repasse.
+    // PDFs do prestador: protocolos de envio, documentos de repasse e espelhos/
+    // demonstrativos de pagamento dos convênios (sync/importar_espelhos.py).
     // Excluir não apaga a linha (fica quem excluiu e quando), só o PDF.
     await db.query(`CREATE TABLE IF NOT EXISTS documentos (
       id SERIAL PRIMARY KEY,
       prestador_id INT NOT NULL REFERENCES prestadores(id),
-      categoria TEXT NOT NULL CHECK (categoria IN ('protocolo','repasse')),
+      categoria TEXT NOT NULL CHECK (categoria IN ('protocolo','repasse','espelho')),
       convenio TEXT NOT NULL DEFAULT '',
       competencia CHAR(7) NOT NULL,
       numero TEXT NOT NULL DEFAULT '',
@@ -194,6 +195,12 @@ function prepararBanco(){
     )`);
     await db.query(`CREATE INDEX IF NOT EXISTS documentos_por_prestador ON documentos (prestador_id, categoria, competencia)`);
     await db.query(`ALTER TABLE documentos ADD COLUMN IF NOT EXISTS medico TEXT NOT NULL DEFAULT ''`);
+    // Banco criado antes de existir a categoria 'espelho' (23/11/2026): troca a regra uma vez só.
+    const [regra] = await db.query(`SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conname = 'documentos_categoria_check'`);
+    if (regra && !regra.def.includes('espelho')){
+      await db.query(`ALTER TABLE documentos DROP CONSTRAINT documentos_categoria_check`);
+      await db.query(`ALTER TABLE documentos ADD CONSTRAINT documentos_categoria_check CHECK (categoria IN ('protocolo','repasse','espelho'))`);
+    }
 
     // Primeiro acesso da equipe: se ainda não existe ninguém da Faturas,
     // cria a conta com ADMIN_LOGIN / ADMIN_SENHA (variáveis de ambiente).

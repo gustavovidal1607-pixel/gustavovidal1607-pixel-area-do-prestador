@@ -29,6 +29,7 @@
   };
   const TIPO_NOME = { 'CONSULTA': 'Consulta', 'SADT': 'SADT', 'HONORÁRIO': 'Honorário (GIH)' };
   const tipoNome = t => TIPO_NOME[t] || t;
+  const CONVENIO_NOME = { 'UNIMED': 'Unimed', 'BRADESCO SAÚDE': 'Bradesco Saúde', 'BRADESCO OPERADORA': 'Bradesco Operadora', 'MEDISERVICE': 'Mediservice', 'SULAMÉRICA': 'SulAmérica', 'PETROBRÁS': 'Petrobras' };
 
   // Estado da Área do Prestador (zera a cada login).
   let P = null;
@@ -54,6 +55,7 @@
     if (aba === 'faturas') return telaFaturas();
     if (aba === 'resumo') return telaResumo();
     if (aba === 'protocolos') return telaDocumentos('protocolo');
+    if (aba === 'espelhos') return telaDocumentos('espelho');
     if (aba === 'repasses') return telaDocumentos('repasse');
     return telaPainel();
   }
@@ -504,10 +506,11 @@
   // ---------------------------------------------------------------- protocolos e repasses
   async function telaDocumentos(categoria){
     const caixa = $('#portal');
-    const titulo = categoria === 'protocolo' ? 'Protocolos de envio' : 'Documentos de repasse';
-    const sub = categoria === 'protocolo'
-      ? 'Comprovantes do envio das suas faturas aos convênios.'
-      : 'Relatórios de repasse e espelhos de pagamento.';
+    const titulo = { protocolo: 'Protocolos de envio', espelho: 'Espelhos de pagamento' }[categoria] || 'Documentos de repasse';
+    const sub = {
+      protocolo: 'Comprovantes do envio das suas faturas aos convênios.',
+      espelho: 'Espelhos e demonstrativos de pagamento dos convênios, pela competência do pagamento.',
+    }[categoria] || 'Relatórios de repasse e espelhos de pagamento.';
     caixa.innerHTML = cabecalho(titulo, sub) + `<div id="docs"><div class="carregando">Carregando…</div></div>`;
     try {
       if (!P.docs[categoria]) P.docs[categoria] = (await CF().api(`/api/documentos?acao=lista&categoria=${categoria}${qMedico()}`)).documentos;
@@ -520,6 +523,9 @@
       const lista = docs.filter(d => (!filtroDoc.comp || d.competencia === filtroDoc.comp) && (!filtroDoc.conv || d.convenio === filtroDoc.conv));
       const porComp = {};
       lista.forEach(d => (porComp[d.competencia] = porComp[d.competencia] || []).push(d));
+      // Espelhos: por convênio, executante, tipo e Seq/quinzena em ordem (Seq 1, 2, 3…).
+      if (categoria === 'espelho') Object.values(porComp).forEach(l => l.sort((a, b) =>
+        [a.convenio, a.medico, a.tipo, a.data_envio || '', a.numero].join('|').localeCompare([b.convenio, b.medico, b.tipo, b.data_envio || '', b.numero].join('|'), 'pt-BR', { numeric: true })));
       $('#docs-lista').innerHTML = lista.length ? Object.keys(porComp).sort().reverse().map(c => `
         <section class="painel grupo-docs">
           <h3>${h(compNome(c))}</h3>
@@ -541,13 +547,15 @@
   }
 
   function itemDocumento(d, equipe){
+    // Espelho: título montado dos campos ("Unimed · Analítico · 10/2026 · Seq 1").
+    const espelho = d.categoria === 'espelho';
     const titulo = d.categoria === 'protocolo'
       ? `Protocolo ${h(d.numero)}`
-      : h(d.tipo || 'Documento');
+      : espelho ? h([CONVENIO_NOME[d.convenio] || d.convenio, d.tipo, compBR(d.competencia), d.numero].filter(Boolean).join(' · ')) : h(d.tipo || 'Documento');
     const meta = [
       d.convenio ? `<span class="chip conv">${h(d.convenio)}</span>` : '',
       d.medico ? `<span class="chip med">${h(d.medico)}</span>` : '',
-      d.data_envio ? `<span>${d.categoria === 'protocolo' ? 'enviado em' : 'de'} ${dataBR(d.data_envio)}</span>` : '',
+      d.data_envio ? `<span>${d.categoria === 'protocolo' ? 'enviado em' : espelho ? 'pago em' : 'de'} ${dataBR(d.data_envio)}</span>` : '',
       d.categoria === 'protocolo' ? (d.lote_pago ? '<span class="sit pago">pago</span>'
         : d.previsao ? `<span class="previsao">previsão de pagamento <b>${dataBR(d.previsao)}</b></span>` : '<span class="quando">sem previsão de pagamento</span>') : '',
       equipe ? `<span>${h(d.prestador_nome)} · ${compBR(d.competencia)}</span>` : '',
@@ -558,7 +566,7 @@
         <div class="doc-info">
           <strong>${titulo}</strong>
           <div class="doc-meta">${meta}</div>
-          <small class="doc-nome" title="${h(d.nome_original)}">${h(d.nome_original)} · ${CF().tamanhoBR(d.tamanho)}</small>
+          <small class="doc-nome" title="${h(d.nome_original)}">${espelho ? '' : h(d.nome_original) + ' · '}${CF().tamanhoBR(d.tamanho)}</small>
           ${d.observacao ? `<small class="doc-obs">${h(d.observacao)}</small>` : ''}
           ${equipe && d.excluido_em ? `<small class="situacao excluida">Excluído ${h(CF().quandoBR(d.excluido_em))}${d.excluido_por_nome ? ' por ' + h(d.excluido_por_nome) : ''}</small>` : ''}
         </div>
@@ -1074,7 +1082,7 @@
             <h2>Documentos enviados</h2>
             <div class="filtros-portal compacto">
               <select id="e-prest" aria-label="Prestador"><option value="">Todos os prestadores</option>${prestadores.map(p => `<option value="${p.id}" ${String(p.id) === E.filtroPrestador ? 'selected' : ''}>${h(p.nome)}</option>`).join('')}</select>
-              <select id="e-cat" aria-label="Tipo"><option value="">Protocolos e repasses</option><option value="protocolo" ${E.filtroCategoria === 'protocolo' ? 'selected' : ''}>Protocolos</option><option value="repasse" ${E.filtroCategoria === 'repasse' ? 'selected' : ''}>Repasses</option></select>
+              <select id="e-cat" aria-label="Tipo"><option value="">Todos os documentos</option><option value="protocolo" ${E.filtroCategoria === 'protocolo' ? 'selected' : ''}>Protocolos</option><option value="espelho" ${E.filtroCategoria === 'espelho' ? 'selected' : ''}>Espelhos de pagamento</option><option value="repasse" ${E.filtroCategoria === 'repasse' ? 'selected' : ''}>Repasses</option></select>
               <label class="marcar"><input type="checkbox" id="e-excl" ${E.verExcluidos ? 'checked' : ''}> mostrar excluídos</label>
             </div>
           </div>
