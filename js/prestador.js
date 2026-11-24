@@ -54,6 +54,7 @@
     } catch (e){ $('#portal').innerHTML = `<div class="vazio"><strong>Não deu para carregar</strong>${h(e.message)}</div>`; return; }
     if (aba === 'faturas') return telaFaturas();
     if (aba === 'resumo') return telaResumo();
+    if (aba === 'lotes') return telaLotes($('#portal'));
     if (aba === 'protocolos') return telaDocumentos('protocolo');
     if (aba === 'espelhos') return telaDocumentos('espelho');
     if (aba === 'repasses') return telaDocumentos('repasse');
@@ -990,6 +991,435 @@
     return { bytes: await doc.save(), paginas: doc.getPageCount(), falhas };
   }
 
+  // ================================================================ LOTES BRADESCO (aba exclusiva da PATHOLOGY)
+  // Willian 24/11/2026: listagem dos lotes do Bradesco (Saúde e Operadora) do ano, lote a lote,
+  // com cara de planilha (modelo que a Dra. recebeu): cada pagamento picado numa linha embaixo
+  // do lote, glosa, aguardando, recurso (em análise, acatado, recebido com data, negado),
+  // situação e observação. Números de /api/prestador?acao=lotes (api/_lotes.js).
+  // Em lote de recurso a diferença é "Recurso negado", nunca glosa (regra da casa).
+  const LT = { dados: null, ano: '', conv: '', mes: '', sit: '', prestadorId: null };
+  const convCurto = c => /OPERADORA/i.test(c) ? 'Bradesco Operadora' : 'Bradesco Saúde';
+  const SITUACOES_LOTE = [['', 'Todas'], ['aguardando', 'Aguardando pagamento'], ['finalizado', 'Finalizado'], ['com_recurso', 'Com recurso'], ['com_glosa', 'Com glosa ou recurso negado']];
+  const COLUNAS_LOTE = [  // [chave, título, tipo]
+    ['convenio', 'Convênio'], ['data_envio', 'Data envio', 'data'], ['lote', 'Protocolo'], ['faturado', 'Faturado', 'v'],
+    ['recebido', 'Recebido', 'v'], ['data_pag', 'Data pagamento', 'data'], ['glosa', 'Glosa', 'v'], ['aguardando', 'Aguardando pagamento', 'v'],
+    ['em_analise', 'Recurso em análise', 'v'], ['acatado', 'Acatado', 'v'], ['recurso_recebido', 'Recurso recebido', 'v'], ['data_rec', 'Data pagamento recurso', 'data'],
+    ['recurso_negado', 'Recurso negado', 'v'], ['situacao', 'Situação'], ['obs', 'Observação'],
+  ];
+  const CAMPOS_SOMA = ['faturado', 'recebido', 'glosa', 'aguardando', 'recursado', 'em_analise', 'acatado', 'recurso_recebido', 'recurso_a_receber', 'recurso_negado'];
+
+  function lotesFiltrados(){
+    return LT.dados.lotes.filter(l => (!LT.conv || l.convenio === LT.conv)
+      && (!LT.mes || (l.data_envio || '').slice(0, 7) === LT.mes)
+      && (!LT.sit || (LT.sit === 'aguardando' ? l.classe === 'aguardando' : LT.sit === 'finalizado' ? l.classe === 'finalizado'
+        : LT.sit === 'com_recurso' ? l.recursado >= 0.01 : (l.glosa >= 0.01 || l.recurso_negado >= 0.01))));
+  }
+  function somaLotes(lotes){
+    const t = { lotes: lotes.length, guias: 0 };
+    CAMPOS_SOMA.forEach(c => { t[c] = 0; });
+    lotes.forEach(l => { t.guias += l.guias; CAMPOS_SOMA.forEach(c => { t[c] += l[c] || 0; }); });
+    CAMPOS_SOMA.forEach(c => { t[c] = Math.round(t[c] * 100) / 100; });
+    return t;
+  }
+  // Linhas da planilha de um lote: a 1ª com o lote; as outras só com os pagamentos picados.
+  function linhasDoLote(l){
+    const n = Math.max(1, l.pagamentos.length, l.recurso_pagamentos.length);
+    const out = [];
+    for (let i = 0; i < n; i++){
+      const p = l.pagamentos[i], r = l.recurso_pagamentos[i];
+      out.push(i === 0 ? {
+        primeira: true, lote: l, convenio: convCurto(l.convenio), data_envio: l.data_envio, lote_num: l.lote, faturado: l.faturado,
+        recebido: p ? p.valor : 0, data_pag: p ? p.data : null, glosa: l.glosa, aguardando: l.aguardando,
+        em_analise: l.em_analise, acatado: l.acatado, recurso_recebido: r ? r.valor : null, data_rec: r ? r.data : null,
+        recurso_negado: l.recurso_negado, situacao: l.situacao, obs: l.obs,
+      } : { primeira: false, lote: l, recebido: p ? p.valor : null, data_pag: p ? p.data : null, recurso_recebido: r ? r.valor : null, data_rec: r ? r.data : null });
+    }
+    return out;
+  }
+  const filtroTexto = () => [LT.conv ? convCurto(LT.conv) : 'Bradesco Saúde e Operadora', LT.mes ? `enviados em ${compBR(LT.mes)}` : '',
+    LT.sit ? SITUACOES_LOTE.find(s => s[0] === LT.sit)[1].toLowerCase() : ''].filter(Boolean).join(' · ');
+
+  // alvo = onde desenhar (aba do prestador ou a tela da equipe por cima); prestadorId só para a equipe.
+  async function telaLotes(alvo, prestadorId = null){
+    LT.prestadorId = prestadorId;
+    const outro = LT.dados && prestadorId && LT.dados.prestador.id !== prestadorId;
+    if (!LT.dados || outro || (LT.ano && LT.dados.ano !== LT.ano)){
+      alvo.innerHTML = `<div class="carregando">Carregando…</div>`;
+      try {
+        LT.dados = await CF().api(`/api/prestador?acao=lotes${LT.ano ? `&ano=${LT.ano}` : ''}${prestadorId ? `&prestador=${prestadorId}` : ''}`);
+        LT.ano = LT.dados.ano;
+      } catch (e){ alvo.innerHTML = `<div class="vazio"><strong>Não deu para carregar</strong>${h(e.message)}</div>`; return; }
+    }
+    desenharLotes(alvo);
+  }
+
+  function desenharLotes(alvo){
+    const d = LT.dados;
+    const meses = Array.from(new Set(d.lotes.map(l => (l.data_envio || '').slice(0, 7)).filter(Boolean))).sort();
+    const convs = Array.from(new Set(d.lotes.map(l => l.convenio))).sort();
+    if (LT.mes && !meses.includes(LT.mes)) LT.mes = '';
+    const lotes = lotesFiltrados(), t = somaLotes(lotes);
+    const atualizado = d.atualizado_em ? `Atualizado em ${h(CF().quandoBR(d.atualizado_em))}.` : '';
+    const dt = iso => iso ? dataBR(iso) : '';
+    const celula = (row, [k, , tipo]) => {
+      if (k === 'lote') return row.primeira ? `<td class="mono lote-num">${h(row.lote_num || '—')}</td>` : '<td></td>';
+      const val = row[k];
+      if (tipo === 'v'){
+        if (val === null || val === undefined) return '<td></td>';
+        const n = Number(val) || 0;
+        const classe = (k === 'recebido' || k === 'recurso_recebido') && n >= 0.005 ? ' pos' : (k === 'glosa' || k === 'recurso_negado') && n >= 0.005 ? ' neg' : '';
+        const mostra = n >= 0.005 || (row.primeira && (k === 'recebido' || k === 'faturado'));
+        return `<td class="n${classe}">${mostra ? dinheiro(n) : ''}</td>`;
+      }
+      if (tipo === 'data') return `<td class="d">${dt(val)}</td>`;
+      if (k === 'situacao') return row.primeira ? `<td><span class="sit-lote ${row.lote.classe}">${h(val)}</span></td>` : '<td></td>';
+      if (k === 'obs') return `<td class="obs" title="${row.primeira ? h(val || '') : ''}">${row.primeira ? h(val || '') : ''}</td>`;
+      return `<td class="${k === 'convenio' ? 'conv' : ''}">${row.primeira ? h(val || '') : ''}</td>`;
+    };
+    const linhaTotal = classe => `<tr class="total ${classe}">
+        <td colspan="3">Total · ${t.lotes} lote${t.lotes === 1 ? '' : 's'}</td><td class="n">${dinheiro(t.faturado)}</td><td class="n">${dinheiro(t.recebido)}</td><td></td>
+        <td class="n">${dinheiro(t.glosa)}</td><td class="n">${dinheiro(t.aguardando)}</td><td class="n">${dinheiro(t.em_analise)}</td><td class="n">${dinheiro(t.acatado)}</td>
+        <td class="n">${dinheiro(t.recurso_recebido)}</td><td></td><td class="n">${dinheiro(t.recurso_negado)}</td><td colspan="2"></td></tr>`;
+    const pags = l => l.pagamentos.map(p => `<li><span>${p.data ? dataBR(p.data) : 'sem data'}</span><b>${dinheiro(p.valor)}</b></li>`).join('')
+      + l.recurso_pagamentos.map(p => `<li class="rec"><span>${p.data ? dataBR(p.data) : 'sem data'} · recurso</span><b>${dinheiro(p.valor)}</b></li>`).join('');
+    const valorMobile = (rot, v, classe = '') => v >= 0.005 ? `<div><dt>${rot}</dt><dd class="${classe}">${dinheiro(v)}</dd></div>` : '';
+    alvo.innerHTML = `
+      ${cabecalho(`Lotes Bradesco ${d.ano}`, `Cada lote enviado ao Bradesco Saúde e ao Bradesco Operadora: cada pagamento com a data, glosa, recurso e o que falta receber. ${atualizado}`, `
+      <div class="filtros-portal lotes-filtros">
+        ${d.anos.length > 1 ? `<label class="campo"><span>Ano</span><select id="lt-ano">${d.anos.map(a => `<option ${a === d.ano ? 'selected' : ''}>${a}</option>`).join('')}</select></label>` : ''}
+        <label class="campo"><span>Convênio</span><select id="lt-conv"><option value="">Saúde e Operadora</option>${convs.map(c => `<option value="${h(c)}" ${c === LT.conv ? 'selected' : ''}>${h(convCurto(c))}</option>`).join('')}</select></label>
+        <label class="campo"><span>Mês de envio</span><select id="lt-mes"><option value="">Todos</option>${meses.map(m => `<option value="${m}" ${m === LT.mes ? 'selected' : ''}>${h(CF().MESES[Number(m.slice(5, 7)) - 1])}</option>`).join('')}</select></label>
+        <label class="campo"><span>Situação</span><select id="lt-sit">${SITUACOES_LOTE.map(([k, n]) => `<option value="${k}" ${k === LT.sit ? 'selected' : ''}>${h(n)}</option>`).join('')}</select></label>
+        <button type="button" class="botao secundario" id="lt-excel" ${lotes.length ? '' : 'disabled'}>Baixar Excel</button>
+        <button type="button" class="botao primario" id="lt-pdf" ${lotes.length ? '' : 'disabled'}>Baixar PDF</button>
+      </div>`)}
+      <p class="resumo-status" id="lt-status" aria-live="polite"></p>
+      <div class="cartoes lotes-cartoes">
+        ${cartao('Faturado', dinheiro(t.faturado), `${t.lotes} lote${t.lotes === 1 ? '' : 's'} · ${t.guias} guias`, 'faturado')}
+        ${cartao('Recebido', dinheiro(t.recebido), t.faturado ? `${pct(t.recebido / t.faturado * 100)} do faturado` : '', 'recebido')}
+        ${cartao('Glosa', dinheiro(t.glosa), t.faturado ? `${pct(t.glosa / t.faturado * 100)} do faturado` : '', 'glosado')}
+        ${cartao('Aguardando pagamento', dinheiro(t.aguardando), '', 'areceber')}
+        ${cartao('Recurso recebido', dinheiro(t.recurso_recebido), t.recursado >= 0.01 ? `de ${dinheiro(t.recursado)} recursados` : 'nenhum recurso', 'recurso-rec')}
+        ${cartao('Recurso negado', dinheiro(t.recurso_negado), t.em_analise >= 0.01 ? `${dinheiro(t.em_analise)} em análise` : 'nada em análise', 'recurso-neg')}
+      </div>
+      ${lotes.length ? `
+      <section class="painel planilha-lotes">
+        <div class="planilha-rolagem">
+        <table class="planilha">
+          <thead><tr>${COLUNAS_LOTE.map(([k, n, tipo]) => `<th class="${tipo === 'v' ? 'n' : ''} c-${k}">${h(n)}</th>`).join('')}</tr>${linhaTotal('cima')}</thead>
+          ${lotes.map((l, i) => `<tbody class="lote${i % 2 ? ' par' : ''}">${linhasDoLote(l).map(row => `<tr class="${row.primeira ? 'cab' : 'picado'}">${COLUNAS_LOTE.map(c => celula(row, c)).join('')}</tr>`).join('')}</tbody>`).join('')}
+          <tfoot>${linhaTotal('')}</tfoot>
+        </table>
+        </div>
+      </section>
+      <ul class="lotes-mobile">
+        ${lotes.map(l => `
+          <li class="lote-cartao">
+            <div class="lc-cab"><div><strong class="mono">${h(l.lote || '—')}</strong><small>${h(convCurto(l.convenio))} · enviado em ${dt(l.data_envio)}</small></div><span class="sit-lote ${l.classe}">${h(l.situacao)}</span></div>
+            <dl class="lc-valores">
+              <div><dt>Faturado</dt><dd>${dinheiro(l.faturado)}</dd></div>
+              <div><dt>Recebido</dt><dd class="pos">${dinheiro(l.recebido)}</dd></div>
+              ${valorMobile('Glosa', l.glosa, 'neg')}${valorMobile('Aguardando', l.aguardando)}${valorMobile('Recurso em análise', l.em_analise)}
+              ${valorMobile('Acatado', l.acatado)}${valorMobile('Recurso recebido', l.recurso_recebido, 'pos')}${valorMobile('Recurso negado', l.recurso_negado, 'neg')}
+            </dl>
+            ${l.pagamentos.length || l.recurso_pagamentos.length ? `<ul class="lc-pags">${pags(l)}</ul>` : ''}
+            ${l.obs ? `<p class="lc-obs">${h(l.obs)}</p>` : ''}
+          </li>`).join('')}
+        <li class="lote-cartao total"><div class="lc-cab"><strong>Total · ${t.lotes} lote${t.lotes === 1 ? '' : 's'}</strong></div>
+          <dl class="lc-valores">
+            <div><dt>Faturado</dt><dd>${dinheiro(t.faturado)}</dd></div><div><dt>Recebido</dt><dd>${dinheiro(t.recebido)}</dd></div>
+            <div><dt>Glosa</dt><dd>${dinheiro(t.glosa)}</dd></div><div><dt>Aguardando</dt><dd>${dinheiro(t.aguardando)}</dd></div>
+            <div><dt>Recurso recebido</dt><dd>${dinheiro(t.recurso_recebido)}</dd></div><div><dt>Recurso negado</dt><dd>${dinheiro(t.recurso_negado)}</dd></div>
+          </dl></li>
+      </ul>` : `<div class="painel vazio"><strong>Nenhum lote</strong>Nada com esses filtros.</div>`}`;
+    const ano = $('#lt-ano', alvo);
+    if (ano) ano.onchange = ev => { LT.ano = ev.target.value; telaLotes(alvo, LT.prestadorId); };
+    $('#lt-conv', alvo).onchange = ev => { LT.conv = ev.target.value; desenharLotes(alvo); };
+    $('#lt-mes', alvo).onchange = ev => { LT.mes = ev.target.value; desenharLotes(alvo); };
+    $('#lt-sit', alvo).onchange = ev => { LT.sit = ev.target.value; desenharLotes(alvo); };
+    const st = $('#lt-status', alvo);
+    $('#lt-excel', alvo).onclick = () => {
+      try { const nome = nomeArquivoLotes('xlsx'); baixarArquivo(excelLotes(lotes, t), nome, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'); st.textContent = `Pronto: ${nome}`; }
+      catch (e){ console.error(e); CF().aviso('Não deu para gerar o Excel.', true); }
+    };
+    $('#lt-pdf', alvo).onclick = async ev => {
+      const b = ev.currentTarget; b.disabled = true;
+      try { st.textContent = 'Preparando o PDF…'; const nome = nomeArquivoLotes('pdf'); baixarArquivo(await pdfLotes(lotes, t), nome, 'application/pdf'); st.textContent = `Pronto: ${nome}`; }
+      catch (e){ console.error(e); st.textContent = ''; CF().aviso(e.message || 'Não deu para gerar o PDF.', true); }
+      finally { b.disabled = false; }
+    };
+  }
+
+  const nomeArquivoLotes = ext => `LOTES BRADESCO ${LT.dados.ano} - ${LT.dados.prestador.nome}${LT.conv ? ' - ' + convCurto(LT.conv).toUpperCase() : ''}${LT.mes ? ' - ENVIO ' + compBR(LT.mes).replace('/', '-') : ''} - ${CF().hojeISO().split('-').reverse().join('-')}.${ext}`;
+  function baixarArquivo(bytes, nome, tipo){
+    const url = URL.createObjectURL(new Blob([bytes], { type: tipo }));
+    const a = document.createElement('a');
+    a.href = url; a.download = nome;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 120000);
+  }
+
+  // Equipe: a mesma aba numa tela por cima (botão "Lotes Bradesco" do prestador).
+  async function abrirLotes(prestadorId){
+    const tela = $('#resumo');
+    tela.hidden = false;
+    document.body.classList.add('com-resumo');
+    tela.innerHTML = `
+      <div class="resumo-barra nao-imprimir lotes-barra"><strong>Lotes Bradesco</strong><div class="resumo-botoes"><button type="button" class="botao fantasma" id="lt-fechar">Fechar</button></div></div>
+      <div class="portal lotes-equipe" id="lotes-equipe"></div>`;
+    $('#lt-fechar').onclick = fecharResumo;
+    if (LT.dados && LT.dados.prestador.id !== prestadorId){ LT.dados = null; LT.ano = ''; LT.conv = ''; LT.mes = ''; LT.sit = ''; }
+    await telaLotes($('#lotes-equipe'), prestadorId);
+    tela.scrollTop = 0;
+  }
+
+  // ---------------------------------------------------------------- Excel (.xlsx sem biblioteca)
+  // No formato do modelo: uma linha por lote e embaixo as linhas dos pagamentos picados; totais no
+  // topo e no rodapé; valores em R$ e datas de verdade (o filtro do Excel funciona).
+  function excelLotes(lotes, t){
+    const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
+    const col = i => { let s = ''; i++; while (i > 0){ const m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); } return s; };
+    const serial = iso => (Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)) - Date.UTC(1899, 11, 30)) / 86400000;
+    // estilos: 0 normal, 1 cabeçalho, 2 R$, 3 data, 4 negrito, 5 R$ negrito, 6 título, 7 total (faixa), 8 total R$, 9 texto cinza
+    const linhas = [];
+    let r = 0;
+    const cel = (c, v, s = 0) => {
+      const ref = `${col(c)}${r}`;
+      if (v === null || v === undefined || v === '') return s ? `<c r="${ref}" s="${s}"/>` : '';
+      if (typeof v === 'number') return `<c r="${ref}" s="${s}"><v>${Math.round(v * 100) / 100}</v></c>`;
+      if (typeof v === 'object' && v.data) return `<c r="${ref}" s="${s || 3}"><v>${serial(v.data)}</v></c>`;
+      return `<c r="${ref}" s="${s}" t="inlineStr"><is><t xml:space="preserve">${esc(v)}</t></is></c>`;
+    };
+    const linha = (cels, alt) => {
+      r++;
+      linhas.push(`<row r="${r}"${alt ? ` ht="${alt}" customHeight="1"` : ''}>${cels.map((x, i) => (x === undefined || x === '') ? '' : Array.isArray(x) ? cel(i, x[0], x[1]) : cel(i, x)).join('')}</row>`);
+    };
+    const d = LT.dados;
+    linha([[`LOTES BRADESCO ${d.ano} · ${d.prestador.nome}`, 6]], 22);
+    linha([[`${filtroTexto()} · gerado em ${CF().quandoBR(new Date())} · Faturas Med`, 9]]);
+    r++;
+    [['TOTAL FATURADO', t.faturado], ['TOTAL RECEBIDO', t.recebido], ['TOTAL GLOSA', t.glosa], ['AGUARDANDO PAGAMENTO', t.aguardando],
+      ['RECURSO EM ANÁLISE', t.em_analise], ['RECURSO ACATADO', t.acatado], ['RECURSO RECEBIDO', t.recurso_recebido], ['RECURSO NEGADO', t.recurso_negado]]
+      .forEach(([n, v]) => linha([[n, 4], undefined, [v, 5]]));
+    r++;
+    linha(COLUNAS_LOTE.map(c => [c[1].toUpperCase(), 1]), 30);
+    const linhaCab = r;
+    const num = (x, mostrarZero) => (x === null || x === undefined) ? '' : (Math.abs(x) >= 0.005 || mostrarZero ? [x, 2] : '');
+    for (const l of lotes){
+      for (const row of linhasDoLote(l)){
+        const p = row.primeira;
+        linha([
+          p ? row.convenio : '', p && row.data_envio ? { data: row.data_envio } : '', p ? row.lote_num : '', p ? num(row.faturado, true) : '',
+          num(row.recebido, p), row.data_pag ? { data: row.data_pag } : '', p ? num(row.glosa) : '', p ? num(row.aguardando) : '',
+          p ? num(row.em_analise) : '', p ? num(row.acatado) : '', num(row.recurso_recebido), row.data_rec ? { data: row.data_rec } : '',
+          p ? num(row.recurso_negado) : '', p ? row.situacao : '', p ? row.obs : '',
+        ]);
+      }
+    }
+    const fim = r;
+    linha([['TOTAL', 7], [`${t.lotes} lotes`, 7], ['', 7], [t.faturado, 8], [t.recebido, 8], ['', 7], [t.glosa, 8], [t.aguardando, 8], [t.em_analise, 8], [t.acatado, 8], [t.recurso_recebido, 8], ['', 7], [t.recurso_negado, 8], ['', 7], ['', 7]]);
+    const larguras = [20, 12, 14, 15, 15, 13, 13, 15, 13, 13, 15, 13, 14, 26, 70];
+    const ultimaCol = col(COLUNAS_LOTE.length - 1);
+    const sheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<sheetViews><sheetView workbookViewId="0"><pane ySplit="${linhaCab}" topLeftCell="A${linhaCab + 1}" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
+<cols>${larguras.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('')}</cols>
+<sheetData>${linhas.join('')}</sheetData>
+<autoFilter ref="A${linhaCab}:${ultimaCol}${fim}"/>
+<pageSetup paperSize="9" orientation="landscape"/>
+</worksheet>`;
+    const estilos = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<numFmts count="1"><numFmt numFmtId="164" formatCode="&quot;R$&quot;\\ #,##0.00"/></numFmts>
+<fonts count="5"><font><sz val="10"/><name val="Calibri"/></font><font><b/><sz val="10"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font><font><b/><sz val="10"/><name val="Calibri"/></font><font><b/><sz val="14"/><color rgb="FF0B60B5"/><name val="Calibri"/></font><font><sz val="9"/><color rgb="FF5E6772"/><name val="Calibri"/></font></fonts>
+<fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF0B60B5"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFE7F0FA"/></patternFill></fill></fills>
+<borders count="1"><border/></borders>
+<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+<cellXfs count="10">
+<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment wrapText="1" vertical="center" horizontal="center"/></xf>
+<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
+<xf numFmtId="14" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyAlignment="1"><alignment horizontal="center"/></xf>
+<xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1"/>
+<xf numFmtId="164" fontId="2" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyFont="1"/>
+<xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1"/>
+<xf numFmtId="0" fontId="2" fillId="3" borderId="0" xfId="0" applyFont="1" applyFill="1"/>
+<xf numFmtId="164" fontId="2" fillId="3" borderId="0" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1"/>
+<xf numFmtId="0" fontId="4" fillId="0" borderId="0" xfId="0" applyFont="1"/>
+</cellXfs>
+<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
+</styleSheet>`;
+    const nomeAba = `LOTES ${d.ano}`;
+    return zipSemCompressao({
+      '[Content_Types].xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`,
+      '_rels/.rels': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`,
+      'xl/workbook.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="${nomeAba}" sheetId="1" r:id="rId1"/></sheets><definedNames><definedName name="_xlnm._FilterDatabase" localSheetId="0" hidden="1">'${nomeAba}'!$A$${linhaCab}:$${ultimaCol}$${fim}</definedName></definedNames></workbook>`,
+      'xl/_rels/workbook.xml.rels': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`,
+      'xl/worksheets/sheet1.xml': sheet,
+      'xl/styles.xml': estilos,
+    });
+  }
+
+  // ZIP "stored" (sem compressão) — basta para o .xlsx.
+  let TABELA_CRC = null;
+  function crc32(bytes){
+    if (!TABELA_CRC){
+      TABELA_CRC = new Uint32Array(256);
+      for (let n = 0; n < 256; n++){ let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; TABELA_CRC[n] = c >>> 0; }
+    }
+    let c = 0xFFFFFFFF;
+    for (let i = 0; i < bytes.length; i++) c = TABELA_CRC[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  }
+  function zipSemCompressao(arquivos){
+    const enc = new TextEncoder(), partes = [], central = [];
+    let pos = 0;
+    const agora = new Date();
+    const hora = (agora.getHours() << 11) | (agora.getMinutes() << 5) | (agora.getSeconds() >> 1);
+    const dia = ((agora.getFullYear() - 1980) << 9) | ((agora.getMonth() + 1) << 5) | agora.getDate();
+    const nomes = Object.keys(arquivos);
+    for (const nome of nomes){
+      const n = enc.encode(nome), dados = enc.encode(arquivos[nome]), crc = crc32(dados);
+      const loc = new DataView(new ArrayBuffer(30));
+      loc.setUint32(0, 0x04034b50, true); loc.setUint16(4, 20, true); loc.setUint16(6, 0x0800, true); loc.setUint16(8, 0, true);
+      loc.setUint16(10, hora, true); loc.setUint16(12, dia, true); loc.setUint32(14, crc, true);
+      loc.setUint32(18, dados.length, true); loc.setUint32(22, dados.length, true); loc.setUint16(26, n.length, true); loc.setUint16(28, 0, true);
+      partes.push(new Uint8Array(loc.buffer), n, dados);
+      const cen = new DataView(new ArrayBuffer(46));
+      cen.setUint32(0, 0x02014b50, true); cen.setUint16(4, 20, true); cen.setUint16(6, 20, true); cen.setUint16(8, 0x0800, true); cen.setUint16(10, 0, true);
+      cen.setUint16(12, hora, true); cen.setUint16(14, dia, true); cen.setUint32(16, crc, true); cen.setUint32(20, dados.length, true); cen.setUint32(24, dados.length, true);
+      cen.setUint16(28, n.length, true); cen.setUint32(42, pos, true);
+      central.push(new Uint8Array(cen.buffer), n);
+      pos += 30 + n.length + dados.length;
+    }
+    const tamCentral = central.reduce((s, x) => s + x.length, 0);
+    const fim = new DataView(new ArrayBuffer(22));
+    fim.setUint32(0, 0x06054b50, true); fim.setUint16(8, nomes.length, true); fim.setUint16(10, nomes.length, true);
+    fim.setUint32(12, tamCentral, true); fim.setUint32(16, pos, true);
+    const tudo = [...partes, ...central, new Uint8Array(fim.buffer)];
+    const out = new Uint8Array(tudo.reduce((s, x) => s + x.length, 0));
+    let o = 0; tudo.forEach(x => { out.set(x, o); o += x.length; });
+    return out;
+  }
+
+  // ---------------------------------------------------------------- PDF (padrão da casa)
+  // A4 deitada: logo Faturas Med no canto superior esquerdo; "Gustavo Vidal / Coordenador / data" no
+  // canto superior direito; totais em cartões; a planilha com os pagamentos picados; sem nota de método.
+  async function pdfLotes(lotes, t){
+    await carregarPdfLib();
+    const { PDFDocument, StandardFonts, rgb } = window.PDFLib;
+    const doc = await PDFDocument.create();
+    const d = LT.dados;
+    doc.setTitle(`Lotes Bradesco ${d.ano} - ${d.prestador.nome}`);
+    doc.setAuthor('Faturas Med');
+    const fonte = await doc.embedFont(StandardFonts.Helvetica);
+    const negrito = await doc.embedFont(StandardFonts.HelveticaBold);
+    let logo = null;
+    try { logo = await doc.embedPng(await logoPng()); } catch (e){ console.warn('logo', e); }
+    const cor = hex => rgb(parseInt(hex.slice(1, 3), 16) / 255, parseInt(hex.slice(3, 5), 16) / 255, parseInt(hex.slice(5, 7), 16) / 255);
+    const AZUL = cor('#0B60B5'), TINTA = cor('#0D2440'), CINZA = cor('#5E6772'), LINHA = cor('#D5DFEA'), FINA = cor('#F3F7FB'),
+      VERDE = cor('#1B7F4B'), VERMELHO = cor('#B3261E'), BRANCO = rgb(1, 1, 1), LARANJA = cor('#B3611A'), CIANO = cor('#06AEE9');
+    const tx = s => String(s ?? '').replace(/[^\x20-\x7E\xA0-\xFF–—•…‘’“”]/g, '?');
+    const W = 841.89, H = 595.28, M = 26;
+    const larg = (s, f, tam) => f.widthOfTextAtSize(tx(s), tam);
+    const caber = (s, f, tam, w) => { s = String(s ?? ''); if (larg(s, f, tam) <= w) return s; while (s.length > 1 && larg(s + '…', f, tam) > w) s = s.slice(0, -1); return s + '…'; };
+    let pagina, y, numPag = 0;
+    const texto = (s, x, yy, { f = fonte, tam = 8, c = TINTA, alinhar = 'esq' } = {}) => {
+      const w = larg(s, f, tam);
+      pagina.drawText(tx(s), { x: alinhar === 'dir' ? x - w : alinhar === 'centro' ? x - w / 2 : x, y: yy, size: tam, font: f, color: c });
+    };
+    const hoje = CF().hojeISO().split('-').reverse().join('/');
+    const COLS = [  // [chave, título, largura, tipo]
+      ['convenio', 'CONVÊNIO', 44], ['data_envio', 'ENVIO', 40, 'data'], ['lote', 'PROTOCOLO', 48], ['faturado', 'FATURADO', 52, 'v'],
+      ['recebido', 'RECEBIDO', 52, 'v'], ['data_pag', 'DATA PGTO', 40, 'data'], ['glosa', 'GLOSA', 45, 'v'], ['aguardando', 'AGUARDANDO', 50, 'v'],
+      ['em_analise', 'REC. ANÁLISE', 46, 'v'], ['acatado', 'ACATADO', 45, 'v'], ['recurso_recebido', 'REC. RECEBIDO', 52, 'v'], ['data_rec', 'DATA REC.', 40, 'data'],
+      ['recurso_negado', 'REC. NEGADO', 48, 'v'], ['situacao', 'SITUAÇÃO', 76], ['obs', 'OBSERVAÇÃO', 0],
+    ];
+    let x0 = M; COLS.forEach(c => { c.x = x0; x0 += c[2]; });
+    COLS[COLS.length - 1][2] = W - M - COLS[COLS.length - 1].x;
+    const moedaPdf = v => (Number(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const cabecalhoTabela = () => {
+      pagina.drawRectangle({ x: M, y: y - 6, width: W - 2 * M, height: 18, color: TINTA });
+      COLS.forEach(c => texto(c[1], c[3] === 'v' ? c.x + c[2] - 3 : c.x + 3, y, { f: negrito, tam: 5.8, c: BRANCO, alinhar: c[3] === 'v' ? 'dir' : 'esq' }));
+      y -= 18;
+    };
+    const novaPagina = primeira => {
+      pagina = doc.addPage([W, H]); numPag++;
+      y = H - M;
+      if (logo){ const lw = primeira ? 150 : 110, lh = lw * logo.height / logo.width; pagina.drawImage(logo, { x: M, y: y - lh, width: lw, height: lh }); }
+      texto('Gustavo Vidal', W - M, y - 10, { f: negrito, tam: 10, alinhar: 'dir' });
+      texto('Coordenador', W - M, y - 22, { tam: 8.5, c: CINZA, alinhar: 'dir' });
+      texto(hoje, W - M, y - 33, { tam: 8.5, c: CINZA, alinhar: 'dir' });
+      y -= 52;
+      texto(`LOTES BRADESCO ${d.ano} · ${d.prestador.nome}`, M, y, { f: negrito, tam: primeira ? 13 : 10, c: AZUL });
+      texto(filtroTexto(), W - M, y, { tam: 8, c: CINZA, alinhar: 'dir' });
+      y -= 8;
+      pagina.drawRectangle({ x: M, y, width: W - 2 * M, height: 2, color: AZUL });
+      y -= 18;
+      texto(RODAPE_EMPRESA, W / 2, 14, { tam: 6.5, c: CINZA, alinhar: 'centro' });
+      texto(`página ${numPag}`, W - M, 14, { tam: 6.5, c: CINZA, alinhar: 'dir' });
+    };
+    novaPagina(true);
+    const cards = [['FATURADO', t.faturado, TINTA], ['RECEBIDO', t.recebido, AZUL], ['GLOSA', t.glosa, LARANJA], ['AGUARDANDO PAGAMENTO', t.aguardando, CIANO],
+      ['RECURSO EM ANÁLISE', t.em_analise, CINZA], ['RECURSO RECEBIDO', t.recurso_recebido, VERDE], ['RECURSO NEGADO', t.recurso_negado, VERMELHO]];
+    const gap = 6, cw = (W - 2 * M - gap * (cards.length - 1)) / cards.length;
+    cards.forEach(([rot, val, c], i) => {
+      const cx = M + i * (cw + gap);
+      pagina.drawRectangle({ x: cx, y: y - 28, width: cw, height: 36, color: FINA });
+      pagina.drawRectangle({ x: cx, y: y + 6, width: cw, height: 2, color: c });
+      texto(rot, cx + 6, y - 4, { f: negrito, tam: 6, c: CINZA });
+      texto(`R$ ${moedaPdf(val)}`, cx + 6, y - 20, { f: negrito, tam: 10 });
+    });
+    texto(`${t.lotes} lote${t.lotes === 1 ? '' : 's'} · ${t.guias} guias${t.faturado ? ` · glosa = ${pct(t.glosa / t.faturado * 100)} do faturado` : ''}${t.recursado >= 0.01 ? ` · recursado R$ ${moedaPdf(t.recursado)} · acatado R$ ${moedaPdf(t.acatado)}` : ''}`, M, y - 42, { tam: 7.5, c: CINZA });
+    y -= 62;
+    cabecalhoTabela();
+    const ALT = 10.5, BASE = 34;
+    lotes.forEach((l, li) => {
+      const rows = linhasDoLote(l);
+      if (y - ALT * rows.length < BASE){ novaPagina(false); cabecalhoTabela(); }
+      if (li % 2) pagina.drawRectangle({ x: M, y: y - 3.5 - ALT * (rows.length - 1), width: W - 2 * M, height: ALT * rows.length, color: FINA });
+      rows.forEach(row => {
+        if (y < BASE){ novaPagina(false); cabecalhoTabela(); }
+        COLS.forEach(c => {
+          const [k, , w, tipo] = c;
+          const val = k === 'lote' ? (row.primeira ? row.lote_num : '') : row[k];
+          if (tipo === 'v'){
+            if (val === null || val === undefined) return;
+            const n = Number(val) || 0;
+            const s = n >= 0.005 || (row.primeira && (k === 'recebido' || k === 'faturado')) ? moedaPdf(n) : '';
+            if (!s) return;
+            const opc = { tam: 6.7 };
+            if ((k === 'glosa' || k === 'recurso_negado') && n >= 0.005) opc.c = VERMELHO;
+            if (k === 'recurso_recebido') opc.c = VERDE;
+            if (k === 'faturado') opc.f = negrito;
+            texto(s, c.x + w - 3, y, { ...opc, alinhar: 'dir' });
+            return;
+          }
+          let s = tipo === 'data' ? (val ? dataBR(val) : '') : (row.primeira ? (val || '') : '');
+          if (k === 'convenio' && s) s = s.replace('Bradesco ', '');
+          if (!s) return;
+          let opc = { tam: 6.7 };
+          if (k === 'situacao') opc = { tam: 6.3, f: negrito, c: l.classe === 'finalizado' ? VERDE : l.classe === 'aguardando' ? AZUL : LARANJA };
+          if (k === 'obs') opc = { tam: 5.8, c: CINZA };
+          if (k === 'lote') opc.f = negrito;
+          texto(caber(s, opc.f || fonte, opc.tam, w - 6), c.x + 3, y, opc);
+        });
+        y -= ALT;
+      });
+      pagina.drawLine({ start: { x: M, y: y + ALT - 3.5 }, end: { x: W - M, y: y + ALT - 3.5 }, thickness: 0.4, color: LINHA });
+    });
+    if (y < BASE + 14) novaPagina(false);
+    y -= 6;
+    pagina.drawRectangle({ x: M, y: y - 6, width: W - 2 * M, height: 18, color: TINTA });
+    texto(`TOTAL · ${t.lotes} LOTES`, M + 4, y, { f: negrito, tam: 7, c: BRANCO });
+    COLS.forEach(c => { if (c[3] === 'v') texto(moedaPdf(t[c[0]]), c.x + c[2] - 3, y, { f: negrito, tam: 6.5, c: BRANCO, alinhar: 'dir' }); });
+    return doc.save();
+  }
+
   // ================================================================ EQUIPE: aba Prestadores
   const E = { admin: null, docs: null, filtroPrestador: '', filtroCategoria: '', verExcluidos: false, categoria: 'protocolo' };
 
@@ -1025,6 +1455,7 @@
                 </div>
                 <div class="acoes-li">
                   <button type="button" class="link" data-ver-resumo="${p.id}" ${p.linhas ? '' : 'disabled'}>Resumo</button>
+                  ${(p.abas_extras || []).includes('lotes') ? `<button type="button" class="link" data-ver-lotes="${p.id}" ${p.linhas ? '' : 'disabled'}>Lotes Bradesco</button>` : ''}
                   <button type="button" class="link" data-renomear-p="${p.id}">Renomear</button>
                   <button type="button" class="link ${p.ativo ? 'perigo' : ''}" data-ativo-p="${p.id}" data-valor="${!p.ativo}">${p.ativo ? 'Desativar' : 'Reativar'}</button>
                 </div>
@@ -1256,6 +1687,8 @@
           if (!ativar && !(await CF().confirmar({ titulo: `Desativar ${h(p.nome)}?`, texto: 'Os acessos desse prestador deixam de entrar na hora. Os dados continuam guardados.', botao: 'Desativar', perigo: true }))) return;
           await CF().api('/api/admin?acao=prestador-editar', { method: 'POST', body: JSON.stringify({ id: p.id, ativo: ativar }) });
           CF().aviso(ativar ? 'Prestador reativado.' : 'Prestador desativado.');
+        } else if (t.dataset.verLotes){
+          return abrirLotes(Number(t.dataset.verLotes));
         } else if (t.dataset.verResumo){
           const comp = await CF().pedirTexto('Resumo de faturamento', 'Competência (MM/AAAA)', compBR(CF().hojeISO().slice(0, 7)));
           const m = comp && comp.match(/^(0[1-9]|1[0-2])\/(\d{4})$/);
@@ -1335,5 +1768,5 @@
     return CF().api('/api/documentos?acao=registrar', { method: 'POST', body: JSON.stringify({ ...meta, chave: r.pathname, nome: arquivo.name, tamanho: arquivo.size }) });
   }
 
-  window.CFPrestador = { portal, equipe, abrirResumo };
+  window.CFPrestador = { portal, equipe, abrirResumo, abrirLotes };
 })();

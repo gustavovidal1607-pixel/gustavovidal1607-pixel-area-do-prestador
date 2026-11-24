@@ -728,3 +728,62 @@ body.com-resumo{overflow:hidden;}
 
 /* Acessos (Área do Prestador): um painel só, largura confortável */
 .acessos.acessos-um{grid-template-columns:minmax(320px, 820px);}
+
+/* ------------------------------------------------------------------ Lotes Bradesco (aba exclusiva da PATHOLOGY) */
+.lotes-cartoes{grid-template-columns:repeat(6, minmax(0, 1fr));}
+.cartao.recurso-rec{border-top-color:#1B7F4B;}
+.cartao.recurso-neg{border-top-color:#B3261E;}
+.lotes-cartoes .cartao .valor{font-size:19px;}
+.planilha-lotes{padding:0; overflow:hidden;}
+.planilha-rolagem{overflow:auto; max-height:calc(100vh - 220px); -webkit-overflow-scrolling:touch;}
+.planilha{width:100%; min-width:1500px; border-collapse:separate; border-spacing:0; font-size:12.5px;}
+.planilha th{position:sticky; top:0; z-index:2; background:var(--tinta); color:#fff; text-align:left; font:600 10.5px/1.25 var(--fonte-titulo); text-transform:uppercase; letter-spacing:.04em; padding:9px 8px; vertical-align:bottom;}
+.planilha th.n{text-align:right;}
+.planilha td{padding:4px 8px; border-bottom:1px solid #EEF2F6; white-space:nowrap; vertical-align:top;}
+.planilha .n{text-align:right; font-family:var(--fonte-num); font-variant-numeric:tabular-nums;}
+.planilha .d{font-family:var(--fonte-num); font-variant-numeric:tabular-nums; color:var(--cinza);}
+.planilha td.conv{font-weight:600;}
+.planilha td.lote-num{font-weight:600;}
+.planilha td.obs{max-width:440px; overflow:hidden; text-overflow:ellipsis; font-size:11.5px; color:var(--cinza);}
+.planilha tbody.lote tr.cab td{border-top:1.5px solid var(--linha); padding-top:7px;}
+.planilha tbody.lote tr:last-child td{padding-bottom:7px;}
+.planilha tbody.lote.par td{background:#F6F9FC;}
+.planilha tbody.lote:hover td{background:#EAF3FC;}
+.planilha tr.picado td{color:var(--tinta); font-size:12px; border-bottom-color:transparent;}
+.planilha .pos{color:#1B6B42;}
+.planilha .neg{color:#B3261E;}
+.planilha tr.total td{background:var(--azul-claro); font-weight:700; border-bottom:1px solid var(--linha); padding:7px 8px;}
+.planilha tfoot tr.total td{background:var(--tinta); color:#fff; border:none;}
+.sit-lote{display:inline-block; padding:2px 8px; border-radius:999px; font:600 11.5px var(--fonte-titulo); white-space:nowrap;}
+.sit-lote.finalizado{background:#E3F4EA; color:#1B6B42;}
+.sit-lote.aguardando{background:var(--ciano-claro); color:#05628A;}
+.sit-lote.recurso{background:#FDF0E1; color:#8A4B0F;}
+.lotes-mobile{display:none; list-style:none; margin:0; padding:0;}
+.lotes-equipe{max-width:1500px; margin:0 auto; background:var(--papel); border-radius:var(--raio); padding:20px;}
+.lotes-barra{max-width:1500px;}
+.lotes-barra strong{font:600 16px var(--fonte-titulo);}
+@media (max-width:1180px){
+  .lotes-cartoes{grid-template-columns:repeat(3, minmax(0, 1fr));}
+}
+@media (max-width:720px){
+  .lotes-filtros .botao{grid-column:auto;}
+  .lotes-cartoes .cartao .valor{font-size:16px;}
+  .planilha-lotes{display:none;}
+  .lotes-mobile{display:flex; flex-direction:column; gap:10px;}
+  .lote-cartao{background:#fff; border-radius:var(--raio); box-shadow:var(--sombra); padding:12px 14px;}
+  .lote-cartao.total{background:var(--tinta); color:#fff;}
+  .lote-cartao.total dt{color:#B9C7D8;}
+  .lc-cab{display:flex; justify-content:space-between; align-items:flex-start; gap:8px;}
+  .lc-cab strong{font-size:15px;}
+  .lc-cab small{display:block; color:var(--cinza); font-size:12.5px;}
+  .lc-valores{display:grid; grid-template-columns:1fr 1fr; gap:6px 12px; margin:10px 0 0;}
+  .lc-valores dt{font:600 10.5px var(--fonte-titulo); text-transform:uppercase; letter-spacing:.04em; color:var(--cinza);}
+  .lc-valores dd{margin:0; font-family:var(--fonte-num); font-size:14px;}
+  .lc-valores dd.pos{color:#1B6B42;} .lc-valores dd.neg{color:#B3261E;}
+  .lc-pags{list-style:none; margin:10px 0 0; padding:8px 0 0; border-top:1px dashed var(--linha); font-size:13px;}
+  .lc-pags li{display:flex; justify-content:space-between; gap:8px; padding:2px 0;}
+  .lc-pags li b{font-family:var(--fonte-num); font-weight:500;}
+  .lc-pags li.rec{color:#1B6B42;}
+  .lc-obs{margin:8px 0 0; font-size:12.5px; color:var(--cinza);}
+  .lotes-equipe{padding:12px; border-radius:0;}
+}

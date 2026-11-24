@@ -19,6 +19,11 @@ const LIMITE_PDF_DIRETO = 100 * 1024 * 1024; // teto de segurança do envio dire
 // Convênios: os mesmos nomes das pastas de
 // \\faturasmed\Documents\CONTROLE DE PAGAMENTO (de onde vêm as planilhas).
 // Bradesco aparece separado em SAÚDE e OPERADORA (regra no sincronizar.py).
+// Abas que só um prestador tem (nome do cadastro -> abas). Willian 24/11/2026: "Lotes Bradesco" só da PATHOLOGY.
+// O prestador só vê a aba se estiver aqui, e a API recusa para os outros.
+const ABAS_EXCLUSIVAS = { 'PATHOLOGY': ['lotes'] };
+const abasExtras = nome => ABAS_EXCLUSIVAS[String(nome || '').trim().toUpperCase()] || [];
+
 const CONVENIOS_PRESTADOR = ['AMIL', 'ASSIM', 'BRADESCO SAÚDE', 'BRADESCO OPERADORA', 'CABERJ - INTEGRAL', 'CABERJ - SAÚDE', 'CASSI', 'MEDISERVICE', 'OMINT', 'PETROBRÁS', 'SULAMÉRICA', 'UNIMED', 'VALE'];
 // Previsão de pagamento sugerida por convênio. Para cadastrar a regra de um
 // convênio novo, basta acrescentar aqui:
@@ -151,6 +156,12 @@ function prepararBanco(){
     await db.query(`CREATE INDEX IF NOT EXISTS producao_por_convenio ON producao (prestador_id, convenio)`);
     // Médico dentro do prestador (clínica com vários médicos: Azul, CAEM). NULL = sem médico.
     await db.query(`ALTER TABLE producao ADD COLUMN IF NOT EXISTS medico TEXT`);
+    // Recurso de glosa (aba Lotes Bradesco, 24/11/2026): status/data do pagamento original da linha
+    // baixada como recurso e o recursado/acatado da resposta do recurso (XML). Vazio nos outros prestadores.
+    await db.query(`ALTER TABLE producao ADD COLUMN IF NOT EXISTS status_inicial TEXT`);
+    await db.query(`ALTER TABLE producao ADD COLUMN IF NOT EXISTS data_pagamento_inicial DATE`);
+    await db.query(`ALTER TABLE producao ADD COLUMN IF NOT EXISTS recurso_recursado NUMERIC(14,2)`);
+    await db.query(`ALTER TABLE producao ADD COLUMN IF NOT EXISTS recurso_acatado NUMERIC(14,2)`);
     await db.query(`CREATE TABLE IF NOT EXISTS sincronizacoes (
       prestador_id INT NOT NULL REFERENCES prestadores(id) ON DELETE CASCADE,
       convenio TEXT NOT NULL,
@@ -490,7 +501,7 @@ function hojeBrasil(){
 }
 
 module.exports = {
-  LIMITE_PDF, LIMITE_PDF_DIRETO, CONVENIOS_PRESTADOR, TIPOS_REPASSE, slug, ehCompetencia,
+  LIMITE_PDF, LIMITE_PDF_DIRETO, CONVENIOS_PRESTADOR, TIPOS_REPASSE, slug, ehCompetencia, abasExtras,
   REGRAS_PREVISAO, sugerirPrevisao, ultimoDiaUtil,
   prepararBanco, hashSenha, conferirSenha, normalizarLogin,
   abrirSessao, fecharSessao, usuarioDaSessao, exigirUsuario,

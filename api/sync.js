@@ -71,8 +71,10 @@ module.exports = L.rota(async (req, res) => {
   });
 
   const colunas = ['previsao_pagamento', 'convenio', 'operadora', 'competencia', 'lote', 'data_lote', 'tipo', 'tipo_original', 'paciente', 'guia', 'data', 'grau',
-    'codigo', 'procedimento', 'qtd', 'faturado', 'recebido', 'glosado', 'data_pagamento', 'status', 'situacao', 'motivo_glosa', 'medico'];
-  const tipos = { previsao_pagamento: 'date', data_lote: 'date', data: 'date', data_pagamento: 'date', qtd: 'numeric', faturado: 'numeric', recebido: 'numeric', glosado: 'numeric' };
+    'codigo', 'procedimento', 'qtd', 'faturado', 'recebido', 'glosado', 'data_pagamento', 'status', 'situacao', 'motivo_glosa', 'medico',
+    'status_inicial', 'data_pagamento_inicial', 'recurso_recursado', 'recurso_acatado'];
+  const tipos = { previsao_pagamento: 'date', data_lote: 'date', data: 'date', data_pagamento: 'date', qtd: 'numeric', faturado: 'numeric', recebido: 'numeric', glosado: 'numeric',
+    data_pagamento_inicial: 'date', recurso_recursado: 'numeric', recurso_acatado: 'numeric' };
   const definicao = colunas.map(c => `${c} ${tipos[c] || 'text'}`).join(', ');
   const modificado = /^\d{4}-\d{2}-\d{2}T/.test(String(corpo.arquivo_modificado || '')) ? corpo.arquivo_modificado : null;
 
@@ -233,5 +235,10 @@ function normalizar(x, fonte){
     motivo_glosa: texto(x.motivo_glosa, 500),
     // Médico (clínica com vários): coluna MÉDICO ou pasta do médico; vazio = sem médico.
     medico: (texto(x.medico, 120) || '').toUpperCase() || null,
+    // Recurso de glosa (planilhas com STATUS INICIAL / respostas de recurso em XML; aba Lotes Bradesco).
+    status_inicial: texto(x.status_inicial, 60),
+    data_pagamento_inicial: data(x.data_pagamento_inicial),
+    recurso_recursado: numero(x.recurso_recursado),
+    recurso_acatado: numero(x.recurso_acatado),
   };
 }

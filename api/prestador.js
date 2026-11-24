@@ -67,6 +67,36 @@ module.exports = L.rota(async (req, res) => {
     return L.responder(res, 200, { prestador, linhas, proximos, hoje: L.hojeBrasil(), atualizado_em: sync && sync.quando, ...infoMedico });
   }
 
+  // Aba exclusiva "Lotes Bradesco" (só quem tem a aba: PATHOLOGY). Lotes do ano pela data de envio.
+  if (acao === 'lotes'){
+    if (!L.abasExtras(prestador.nome).includes('lotes')) return L.responder(res, 404, { erro: 'Esta aba não existe para este prestador.' });
+    const ano = /^\d{4}$/.test(p.get('ano') || '') ? p.get('ano') : L.hojeBrasil().slice(0, 4);
+    const linhas = await db.query(
+      `SELECT convenio, lote, to_char(data_lote, 'YYYY-MM-DD') AS data_lote, tipo, guia,
+              faturado::float8 AS faturado, recebido::float8 AS recebido, glosado::float8 AS glosado,
+              to_char(data_pagamento, 'YYYY-MM-DD') AS data_pagamento, status, situacao, motivo_glosa,
+              status_inicial, to_char(data_pagamento_inicial, 'YYYY-MM-DD') AS data_pagamento_inicial,
+              recurso_recursado::float8 AS recurso_recursado, recurso_acatado::float8 AS recurso_acatado,
+              to_char(COALESCE((SELECT d.previsao_pagamento FROM documentos d
+                 WHERE d.prestador_id = producao.prestador_id AND d.categoria = 'protocolo' AND d.excluido_em IS NULL
+                   AND d.numero = producao.lote AND d.previsao_pagamento IS NOT NULL ORDER BY d.id DESC LIMIT 1),
+                 previsao_pagamento), 'YYYY-MM-DD') AS previsao
+         FROM producao
+        WHERE prestador_id = $1 AND convenio LIKE 'BRADESCO%'
+          AND to_char(COALESCE(data_lote, to_date(competencia || '-01', 'YYYY-MM-DD')), 'YYYY') = $2
+          AND ($3::text IS NULL OR ($3 = '-' AND medico IS NULL) OR medico = $3)`,
+      [prestadorId, ano, medico]
+    );
+    const anos = (await db.query(
+      `SELECT DISTINCT to_char(COALESCE(data_lote, to_date(competencia || '-01', 'YYYY-MM-DD')), 'YYYY') AS ano
+         FROM producao WHERE prestador_id = $1 AND convenio LIKE 'BRADESCO%' ORDER BY 1 DESC`, [prestadorId])).map(x => x.ano);
+    const { montarLotes, somarLotes } = require('./_lotes');
+    const lotes = montarLotes(linhas, L.hojeBrasil());
+    const [sync] = await db.query(`SELECT quando FROM sincronizacoes WHERE prestador_id = $1 AND convenio = 'BRADESCO'`, [prestadorId]);
+    return L.responder(res, 200, { prestador, ano, anos, lotes, totais: somarLotes(lotes), hoje: L.hojeBrasil(),
+      atualizado_em: sync && sync.quando, gerado_em: new Date().toISOString() });
+  }
+
   const mes = p.get('mes') || '';
   if (!L.ehCompetencia(mes)) return L.responder(res, 400, { erro: 'Competência inválida.' });
 

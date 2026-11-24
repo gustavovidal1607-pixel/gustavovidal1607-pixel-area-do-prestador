@@ -198,7 +198,11 @@
     $('#app').hidden = false;
     $('#topo-nome').textContent = usuario.nome;
     $('#topo-local').textContent = usuario.perfil === 'prestador' ? usuario.prestador_nome : 'Equipe Faturas Med';
-    const abas = ABAS[usuario.perfil] || [];
+    const abas = (ABAS[usuario.perfil] || []).slice();
+    // Aba exclusiva de um prestador (Lotes Bradesco só da PATHOLOGY): vem do servidor em abas_extras.
+    if (usuario.perfil === 'prestador' && (usuario.abas_extras || []).includes('lotes')){
+      abas.splice(abas.findIndex(a => a[0] === 'resumo') + 1, 0, ['lotes', 'Lotes Bradesco']);
+    }
     estado.aba = abas[0][0];
     const nav = $('#topo-abas');
     nav.innerHTML = abas.map(([id, nome], i) => `<button type="button" data-aba="${id}" ${i === 0 ? 'aria-current="page"' : ''}>${nome}</button>`).join('');

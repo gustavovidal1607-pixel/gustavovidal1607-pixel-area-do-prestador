@@ -38,7 +38,9 @@ module.exports = L.rota(async (req, res) => {
   const db = await L.prepararBanco();
 
   if (req.method === 'GET' && acao === 'eu'){
-    return L.responder(res, 200, { usuario: await L.usuarioDaSessao(req), direto: L.uploadDireto() });
+    const eu = await L.usuarioDaSessao(req);
+    if (eu) eu.abas_extras = eu.perfil === 'prestador' ? L.abasExtras(eu.prestador_nome) : [];
+    return L.responder(res, 200, { usuario: eu, direto: L.uploadDireto() });
   }
 
   if (req.method !== 'POST') return L.responder(res, 405, { erro: 'Método não permitido.' });
@@ -89,5 +91,6 @@ async function usuarioPorId(db, id){
        FROM usuarios u LEFT JOIN prestadores p ON p.id = u.prestador_id WHERE u.id = $1`,
     [id]
   );
+  if (u) u.abas_extras = u.perfil === 'prestador' ? L.abasExtras(u.prestador_nome) : [];
   return u;
 }
