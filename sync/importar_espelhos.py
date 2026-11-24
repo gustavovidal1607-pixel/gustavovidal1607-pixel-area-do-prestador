@@ -9,7 +9,7 @@ entra de novo, então pode rodar todo dia (sync\\local\\sincronizar.bat).
 
 Padrões que entende (23/11/2026):
   UNIMED\\<P>\\ESPELHO DE PAGAMENTO\\Analitico\\MM-AAAA SEQ n.pdf      (também "MM-AA <nome> Seq n.pdf")
-  UNIMED\\<P>\\ESPELHO DE PAGAMENTO\\Sintetico\\MM-AAAA SEQ n.pdf
+  (UNIMED ...\\Sintetico NÃO entra no portal — Willian 23/11)
   UNIMED\\<P>\\ESPELHO DE PAGAMENTO\\ESBOÇO DE NOTA FISCAL\\MM-AAAA ESBOÇO DE NOTA FISCAL SEQ n.pdf
       (Novos/Processados são pastas de passagem dos robôs: ignoradas)
   BRADESCO\\<P>\\Demonstrativos\\Processados\\SAUDE|OPERADORA_DEMOSTRATIVO_<cód>_AAAA-MM-Qn.pdf
@@ -87,7 +87,8 @@ def pastas_convenio(base, convenio):
 
 # ---------------------------------------------------------------- leitura das pastas
 
-TIPOS_UNIMED = [("Analitico", "Analítico"), ("Sintetico", "Sintético"), ("ESBOÇO DE NOTA FISCAL", "Esboço de nota fiscal")]
+# Willian 23/11: só Analítico e Esboço de nota fiscal; o Sintético NÃO entra no portal.
+TIPOS_UNIMED = [("Analitico", "Analítico"), ("ESBOÇO DE NOTA FISCAL", "Esboço de nota fiscal")]
 
 
 def espelhos_unimed(base):
