@@ -142,6 +142,12 @@
     const sel = doConv.filter(l => !P.comp || l.competencia === P.comp);
     const t = somar(sel);
     const atualizado = P.atualizado ? `Atualizado em ${h(CF().quandoBR(P.atualizado))}.` : '';
+    // Gustavo 24/11: com "Todos" os convênios, a divisão por convênio + o total fica logo abaixo dos cartões
+    const secaoConvenios = `
+      <section class="painel">
+        <div class="bloco-titulo"><h3>Por convênio · ${h(compNome(P.comp))}</h3></div>
+        ${tabelaConvenios(sel)}
+      </section>`;
     caixa.innerHTML = `
       ${cabecalho('Painel', `${h(compNome(P.comp))}${P.convenio ? ' · ' + h(P.convenio) : ''}${P.medico ? ' · ' + h(nomeMedico(P.medico)) : ''}. ${atualizado}`, filtros())}
       <div class="cartoes">
@@ -151,6 +157,7 @@
         ${cartao('A receber', dinheiro(t.a_receber), 'faturado e ainda não pago', 'areceber')}
         ${cartao('% de glosa', pct(t.pct_glosa), 'glosado ÷ faturado', 'pctglosa')}
       </div>
+      ${!P.convenio ? secaoConvenios : ''}
       <section class="painel bloco-grafico">
         <div class="bloco-titulo">
           <h3>Mês a mês${P.convenio ? ` · ${h(P.convenio)}` : ''}</h3>
@@ -164,10 +171,7 @@
         <p class="nota-grafico">Toque numa barra para ver a competência.</p>
       </section>
       ${MOSTRAR_PROXIMOS ? `<section class="painel" id="proximos">${proximosPagamentos()}</section>` : ''}
-      <section class="painel">
-        <div class="bloco-titulo"><h3>Por convênio · ${h(compNome(P.comp))}</h3></div>
-        ${tabelaConvenios(sel)}
-      </section>`;
+      ${P.convenio ? secaoConvenios : ''}`;
     ligarFiltros(telaPainel);
     const todos = $('#proximos-todos');
     if (todos) todos.onclick = () => { P.proximosTodos = true; $('#proximos').innerHTML = proximosPagamentos(); };
