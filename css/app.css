@@ -767,6 +767,7 @@ body.com-resumo{overflow:hidden;}
 }
 @media (max-width:720px){
   .lotes-filtros .botao{grid-column:auto;}
+  .lotes-cartoes{grid-template-columns:1fr 1fr;}
   .lotes-cartoes .cartao .valor{font-size:16px;}
   .planilha-lotes{display:none;}
   .lotes-mobile{display:flex; flex-direction:column; gap:10px;}
