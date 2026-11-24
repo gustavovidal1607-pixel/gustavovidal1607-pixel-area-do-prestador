@@ -66,7 +66,8 @@ PASTAS_EXTRAS = {
     "CAEM": {"CLAUDIO LUIZ LOURENÇO": "CLAUDIO LUIZ LOURENÇO"},
     "CENTRUS": {"FERNANDO LINHARES": "FERNANDO LINHARES"},
     "PAM": {"PEDRO MAY": "PEDRO MAY"},   # Willian 23/11: mesmo prestador
-    "ANGIOMED": {"FABIO PESSANHA BRITO": "FABIO PESSANHA BRITO"},   # Willian 23/11: mesmo prestador   # Willian 23/11: mesmo prestador, produção junto na Centrus
+    "ANGIOMED": {"FABIO PESSANHA BRITO": "FABIO PESSANHA BRITO"},   # Willian 23/11: mesmo prestador
+    "PATHOLOGY": {"CARLA MARCELI": "CARLA MARCELI", "VERONICA RODRIGUES": "VERONICA RODRIGUES"},   # Willian 24/11: juntas na Pathology   # Willian 23/11: mesmo prestador, produção junto na Centrus
     "AZUL OFTALMOLOGIA": {"ERICK MARCET - AZUL OFTALMOLOGIA": "ERICK MARCET",
                           "RACHEL CAMARGO - AZUL OFTALMOLOGIA": "RACHEL CAMARGO"},
 }
@@ -115,7 +116,7 @@ CORTES_COMPETENCIA = {
 DIA_UTIL_LIMITE = 5
 
 # Executante das linhas sem médico na planilha (Willian 23/11: Centrus aparece como CENTRUS, não "sem médico informado").
-EXECUTANTE_PADRAO = {"CENTRUS": "CENTRUS", "PAM": "PAM", "ANGIOMED": "ANGIOMED"}
+EXECUTANTE_PADRAO = {"CENTRUS": "CENTRUS", "PAM": "PAM", "ANGIOMED": "ANGIOMED", "PATHOLOGY": "PATHOLOGY"}
 
 
 def sem_acento(texto):
