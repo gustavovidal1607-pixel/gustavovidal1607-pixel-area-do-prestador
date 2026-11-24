@@ -17,7 +17,7 @@ Padrões que entende (23/11/2026):
       (Demonstrativos\\Recursos = demonstrativo de RECURSO DE GLOSA: não é pagamento, ignorado)
   MEDISERVICE\\<P>\\Demonstrativo de Pagamento\\DEMONSTRATIVO MM-AAAA - PAGO dd-mm-aaaa[ e dd-mm-aaaa].pdf
   SULAMÉRICA\\<P>\\Demonstrativos\\Novos\\AAAA-MM-DD pagamento\\DEMONSTRATIVO DE PAGAMENTO - dd.mm.aa[ (n)].pdf
-                                                           \\ANALISE DE CONTA - dd.mm.aa.pdf
+      (ANALISE DE CONTA - dd.mm.aa.pdf NÃO entra no portal — Willian 24/11)
   Petrobras, Amil, Cassi e outros: ainda não têm PDF de demonstrativo nas pastas.
 
 Prestador = nome da pasta (PRESTADORES do sincronizar.py); as pastas de
@@ -166,7 +166,7 @@ def espelhos_sulamerica(base):
                     if u.startswith("DEMONSTRATIVO DE PAGAMENTO"):
                         tipo = "Demonstrativo de pagamento"
                     elif u.startswith("ANALISE DE CONTA"):
-                        tipo = "Análise de conta"
+                        continue  # Willian 24/11: Análise de conta NÃO entra no portal
                     else:
                         print(f"  ? SULAMÉRICA/{pasta}/{sub}/{nome}: não é demonstrativo, pulei")
                         continue
