@@ -380,6 +380,73 @@ def achar_planilha(prestador, pasta_base):
     return sorted(achadas.items())
 
 
+# Fórmulas sem valor calculado (Gustavo 26/11): planilha salva pelo openpyxl dos robôs perde o valor em cache
+# das fórmulas (ex.: VALOR RECEBIDO "=N193", VALOR GLOSADO "=N193-O193") e o data_only devolve None, aí o portal
+# mostrava recebido 0. Quando a célula vem None e tem fórmula, calculamos as fórmulas simples: referências de
+# célula da mesma aba ($ opcional), números, + - * / e parênteses. Fórmula mais complexa: aviso no log.
+# Fórmula que depende de célula vazia continua vazia (guia sem pagamento não vira glosa).
+FORMULAS = {"calculadas": 0, "nao_calculadas": 0, "vazias": 0, "linhas": 0}
+_RE_REF = re.compile(r"\$?([A-Z]{1,3})\$?(\d+)")
+_RE_FORMULA_SIMPLES = re.compile(r"^[A-Z0-9$.+\-*/() ]+$")
+
+
+def _coluna_indice(letras):
+    n = 0
+    for ch in letras:
+        n = n * 26 + (ord(ch) - 64)
+    return n - 1
+
+
+class _Vazia(Exception):
+    pass
+
+
+class Formulas:
+    """Calcula fórmula simples de uma célula usando os valores em cache (data_only) e, se a célula
+    referida também for fórmula sem cache, calcula ela também (até 10 níveis)."""
+
+    def __init__(self, valores, formulas):
+        self.valores, self.formulas = valores, formulas   # listas de linhas, linha 1 da planilha = índice 0
+
+    def _celula(self, linha, col, nivel):
+        v = self.valores[linha][col] if linha < len(self.valores) and col < len(self.valores[linha]) else None
+        if v is None:
+            f = self.formulas[linha][col] if linha < len(self.formulas) and col < len(self.formulas[linha]) else None
+            if isinstance(f, str) and f.startswith("="):
+                return self.calcular(f, nivel + 1)
+        return v
+
+    def calcular(self, formula, nivel=0):
+        """Valor da fórmula, ou levanta ValueError se não for das simples."""
+        if nivel > 10:
+            raise ValueError("referência circular ou muito longa")
+        corpo = formula[1:].strip().upper()
+        if not corpo or not _RE_FORMULA_SIMPLES.match(corpo):
+            raise ValueError("fórmula não suportada")
+        unica = _RE_REF.fullmatch(corpo)
+        if unica:   # "=N193": devolve o valor como está (número, data ou texto)
+            return self._celula(int(unica.group(2)) - 1, _coluna_indice(unica.group(1)), nivel)
+        def troca(m):
+            v = self._celula(int(m.group(2)) - 1, _coluna_indice(m.group(1)), nivel)
+            if v in (None, ""):
+                # célula referida vazia (ex.: glosa "=P2-Q2" de guia ainda sem pagamento): a fórmula fica vazia,
+                # senão a guia que aguarda pagamento viraria glosa total
+                raise _Vazia()
+            if not isinstance(v, (int, float)):
+                raise ValueError("referência a célula que não é número")
+            return repr(float(v))
+        try:
+            expr = _RE_REF.sub(troca, corpo)
+        except _Vazia:
+            return None
+        if re.search(r"[A-Z$]", expr):
+            raise ValueError("fórmula não suportada")
+        try:
+            return round(eval(expr, {"__builtins__": {}}, {}), 2)   # só números, + - * / e parênteses
+        except Exception as e:
+            raise ValueError(f"não calculou ({e})")
+
+
 def ler_planilha(caminho, convenio, medico_pasta=None):
     """Copia para pasta temporária e lê. Devolve (linhas, avisos, aba)."""
     temp = tempfile.mkdtemp(prefix="sync_prestador_")
@@ -405,9 +472,38 @@ def ler_planilha(caminho, convenio, medico_pasta=None):
             if aba is None:
                 return [], ["nenhuma aba com cabeçalho COMP/GUIA/VALOR FATURADO"], None, []
             linhas, avisos = [], []
+            # Fórmulas sem valor em cache: lê as fórmulas da mesma cópia (segunda abertura, sem data_only).
+            calc = None
+            colunas = sorted(set(mapa.values()))
+            if any(r[c] is None for r in linhas_aba for c in colunas if c < len(r)):
+                wbf = openpyxl.load_workbook(copia, read_only=True, data_only=False)
+                try:
+                    formulas = [list(x) for x in wbf[aba].iter_rows(values_only=True)]
+                finally:
+                    wbf.close()
+                calc = Formulas([list(cab)] + [list(x) for x in linhas_aba], formulas)
+            nao_calc = []
             for n, r in enumerate(linhas_aba, start=2):
                 if not any(c not in (None, "") for c in r):
                     continue
+                if calc:
+                    r = list(r)
+                    mexeu = False
+                    for c in colunas:
+                        f = calc.formulas[n - 1][c] if n - 1 < len(calc.formulas) and c < len(calc.formulas[n - 1]) else None
+                        if c < len(r) and r[c] is None and isinstance(f, str) and f.startswith("="):
+                            try:
+                                r[c] = calc.calcular(f)
+                                if r[c] is None:
+                                    FORMULAS["vazias"] += 1
+                                    continue          # referência vazia: segue vazia, como antes
+                                FORMULAS["calculadas"] += 1
+                                mexeu = True
+                            except ValueError as e:
+                                FORMULAS["nao_calculadas"] += 1
+                                nao_calc.append(f"linha {n} col {c + 1}: {f} ({e})")
+                    if mexeu:
+                        FORMULAS["linhas"] += 1
                 pega = lambda campo: r[mapa[campo]] if campo in mapa and mapa[campo] < len(r) else None
                 comp_planilha = competencia(pega("comp"))
                 # A competência final sai de aplicar_competencias (data do lote);
@@ -452,6 +548,9 @@ def ler_planilha(caminho, convenio, medico_pasta=None):
                 }
                 # Datas que vieram como texto ficam como texto; o portal entende DD/MM/AAAA.
                 linhas.append({k: (valor_json(v) if not isinstance(v, str) else v.strip()) for k, v in linha.items()})
+            if nao_calc:
+                print(f"  ! {os.path.basename(caminho)}: {len(nao_calc)} fórmulas sem valor calculado que não deu para calcular"
+                      f" (ficaram vazias): " + "; ".join(nao_calc[:5]) + (" ..." if len(nao_calc) > 5 else ""), file=sys.stderr)
             detalhe = aplicar_competencias(linhas, convenio, planilha_antes="INTEGRADA" in sem_acento(caminho))
             return linhas, avisos, aba, detalhe
         finally:
@@ -755,6 +854,9 @@ def main():
             except Exception as e:
                 print(f"  ! {convenio}: envio falhou: {e}", file=sys.stderr)
                 falhas += 1
+    if FORMULAS["calculadas"] or FORMULAS["nao_calculadas"]:
+        print(f"Fórmulas sem valor calculado na planilha: {FORMULAS['calculadas']} células calculadas pelo sync"
+              f" ({FORMULAS['linhas']} linhas), {FORMULAS['nao_calculadas']} não calculadas (aviso acima).")
     if a.json:
         with open(a.json, "w", encoding="utf-8") as f:
             json.dump(pacotes, f, ensure_ascii=False, indent=1)

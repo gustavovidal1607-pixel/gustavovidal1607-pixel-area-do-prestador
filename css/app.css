@@ -526,6 +526,14 @@ button.lote-cabeca:focus-visible{outline:2px solid var(--azul); outline-offset:-
 .rc-data{font:600 14.5px var(--fonte-titulo);}
 .sit.analise{background:#FFF1DF; color:#8A4B0F; white-space:normal;}
 .sit-lote.negado{background:var(--erro-claro); color:var(--erro);}
+.sit.acatada{background:#ECEFF3; color:#4A5868;}
+/* histórico da guia na coluna Situação (Faturas) */
+.historico{list-style:none; margin:5px 0 0; padding:0 0 0 12px; border-left:2px solid var(--linha); font-size:12px; color:var(--cinza); max-width:300px;}
+.historico li{position:relative; padding:1px 0 2px;}
+.historico li::before{content:''; position:absolute; left:-16px; top:6px; width:6px; height:6px; border-radius:50%; background:#B9C7D8;}
+.historico li.motivo{color:#9A4D0C;}
+.historico li.neg{color:#B3261E; font-weight:600;}
+.historico li.pos{color:#1B6B42; font-weight:600;}
 .segmento.rolavel{overflow-x:auto; max-width:100%;}
 .segmento.rolavel button{white-space:nowrap;}
 

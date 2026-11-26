@@ -28,10 +28,85 @@
     aguardando: { nome: 'Aguardando', classe: 'aguardando' },
     // Gustavo 26/11: linha com STATUS "ATENÇÃO" na planilha (glosa que a equipe está analisando para recorrer).
     analise: { nome: 'Glosado - Em análise para recurso', classe: 'analise' },
+    // Gustavo 26/11: glosa acatada e situação atual do recurso (histórico da guia em Faturas).
+    acatada: { nome: 'Acatado', classe: 'acatada' },
+    rec_analise: { nome: 'Recurso em análise', classe: 'analise' },
+    rec_negado: { nome: 'Recurso negado', classe: 'glosado' },
+    rec_recebido: { nome: 'Recurso recebido', classe: 'pago' },
+    rec_parcial: { nome: 'Recurso aceito em parte', classe: 'parcial' },
+    rec_a_receber: { nome: 'Recurso acatado, a receber', classe: 'aguardando' },
+    pago_acatada: { nome: 'Pago (glosa acatada)', classe: 'pago' },
   };
-  // Situação mostrada na linha: a calculada pelos valores, menos a glosa com STATUS "ATENÇÃO" (= em análise para recurso).
-  const semAcentoSt = t => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().trim();
-  const sitLinha = l => (l.situacao === 'glosado' || l.situacao === 'parcial') && semAcentoSt(l.status).startsWith('ATENCAO') ? 'analise' : l.situacao;
+  // Situação mostrada na linha (selo): a calculada pelos valores, refinada pelo STATUS da planilha —
+  // ATENÇÃO = em análise para recurso; ACATADO = glosa acatada; recurso (RECURSADO DIA ..., RECURSO
+  // RECEBIDO/NEGADO, STATUS INICIAL RECURSADO, resposta no XML) = situação atual do recurso. Mesmas regras
+  // da aba Recursos (api/_lotes.js, classificarRecurso). Gustavo 26/11.
+  const semAcentoSt = t => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().trim();
+  const r2 = v => Math.round((Number(v) || 0) * 100) / 100;
+  function recursoDaLinha(l){
+    const st = semAcentoSt(l.status), ini = semAcentoSt(l.status_inicial);
+    const rec = Math.max(Number(l.recebido) || 0, 0), glo = Math.max(Number(l.glosado) || 0, 0);
+    const temXml = l.recurso_recursado !== null && l.recurso_recursado !== undefined;
+    if (st.startsWith('ACATAD')) return { sit: 'acatada', glosa: r2(glo) };
+    if (st.startsWith('ATENCAO') || st.startsWith('RECURSO PRONTO')) return glo > 0.005 ? { sit: 'analise', glosa: r2(glo) } : null;
+    if (st.startsWith('RECURSADO')) return { sit: 'rec_analise', glosa: r2(glo), recursado: r2(glo) };
+    if (st.startsWith('RECURSO RECEBIDO') || st.startsWith('RECURSO NEGADO') || ini.includes('RECURS')){
+      const ac = st.includes('NEGADO') ? 0 : temXml ? Math.min(Math.max(Number(l.recurso_acatado) || 0, 0), rec) : rec;
+      return { sit: ac < 0.005 ? 'rec_negado' : glo >= 0.005 ? 'rec_parcial' : 'rec_recebido', respondido: true, acatado: r2(ac), negado: r2(glo), original: r2(rec - ac), glosa: r2(ac + glo), recursado: r2(ac + glo) };
+    }
+    if (temXml && Number(l.recurso_recursado) > 0.005){
+      // resposta do recurso já veio (XML), mas a baixa ainda não foi feita na planilha
+      const recursado = glo > 0.005 ? Math.min(Number(l.recurso_recursado), glo) : Number(l.recurso_recursado);
+      const ac = Math.min(Math.max(Number(l.recurso_acatado) || 0, 0), recursado);
+      return { sit: ac < 0.005 ? 'rec_negado' : 'rec_a_receber', acatado: r2(ac), negado: r2(recursado - ac), glosa: r2(glo), recursado: r2(recursado) };
+    }
+    return null;
+  }
+  const sitLinha = l => { const r = recursoDaLinha(l); return r ? r.sit : l.situacao; };
+  // Linha do tempo da guia (coluna Situação de Faturas): as etapas, com as datas que existirem.
+  function historicoLinha(l){
+    const r = recursoDaLinha(l), etapas = [];
+    const em = d => d ? ` em ${dataBR(d)}` : '';
+    const motivo = l.motivo_glosa ? ` (${l.motivo_glosa})` : '';
+    const valor = v => v >= 0.005 ? ` ${dinheiro(v)}` : '';
+    const recursado = () => ({ t: `Recursado${valor(r.recursado)}${em(l.recurso_data)}${l.recurso_protocolo ? ` · protocolo ${l.recurso_protocolo}` : ''}` });
+    const resposta = () => { if (l.resposta_operadora) etapas.push({ t: `Resposta do convênio: ${l.resposta_operadora}`, c: 'motivo' }); };
+    if (!r){
+      if (l.data_pagamento && l.situacao !== 'aguardando') etapas.push({ t: `pago em ${dataBR(l.data_pagamento)}` });
+      if (l.motivo_glosa && (l.situacao === 'glosado' || l.situacao === 'parcial')) etapas.push({ t: l.motivo_glosa, c: 'motivo' });
+      return etapas;
+    }
+    if (r.respondido){
+      // linha baixada como recurso: o pagamento original (com a glosa) foi na DATA DO PAGAMENTO INICIAL,
+      // a resposta do recurso na DATA PAGAMENTO
+      if (r.original >= 0.005) etapas.push({ t: `Pago ${dinheiro(r.original)}${em(l.data_pagamento_inicial)}` });
+      etapas.push({ t: `Glosado${valor(r.glosa)}${em(l.data_pagamento_inicial)}${motivo}`, c: 'motivo' });
+      etapas.push(recursado());
+      if (r.sit === 'rec_negado') etapas.push({ t: `Recurso negado${em(l.data_pagamento)}`, c: 'neg' });
+      else if (r.sit === 'rec_recebido') etapas.push({ t: `Recurso recebido ${dinheiro(r.acatado)}${em(l.data_pagamento)}`, c: 'pos' });
+      else etapas.push({ t: `Recurso aceito em parte: recebido ${dinheiro(r.acatado)}${em(l.data_pagamento)}, negado ${dinheiro(r.negado)}`, c: 'pos' });
+      resposta();
+      return etapas;
+    }
+    if (l.recebido >= 0.005 && l.data_pagamento) etapas.push({ t: `Pago ${dinheiro(l.recebido)} em ${dataBR(l.data_pagamento)}` });
+    etapas.push({ t: `Glosado${valor(r.glosa)}${em(l.data_pagamento)}${motivo}`, c: 'motivo' });
+    if (r.sit === 'acatada') etapas.push({ t: 'Glosa acatada (aceita, sem recurso)' });
+    else if (r.sit === 'analise') etapas.push({ t: 'Em análise para recurso' });
+    else {
+      etapas.push(recursado());
+      if (r.sit === 'rec_analise') etapas.push({ t: 'Recurso em análise (aguardando resposta do convênio)' });
+      else if (r.sit === 'rec_a_receber') etapas.push({ t: `Recurso acatado ${dinheiro(r.acatado)}, aguardando pagamento${r.negado >= 0.005 ? ` · negado ${dinheiro(r.negado)}` : ''}`, c: 'pos' });
+      else etapas.push({ t: 'Recurso negado', c: 'neg' });
+    }
+    resposta();
+    return etapas;
+  }
+  function historicoHtml(l){
+    const e = historicoLinha(l);
+    if (!e.length) return '';
+    if (!recursoDaLinha(l)) return e.map(x => x.c === 'motivo' ? `<small class="motivo">${h(x.t)}</small>` : `<small class="quando bloco">${h(x.t)}</small>`).join('');
+    return `<ol class="historico">${e.map(x => `<li class="${x.c || ''}">${h(x.t)}</li>`).join('')}</ol>`;
+  }
   const TIPO_NOME = { 'CONSULTA': 'Consulta', 'SADT': 'SADT', 'HONORÁRIO': 'Honorário (GIH)' };
   const tipoNome = t => TIPO_NOME[t] || t;
   const CONVENIO_NOME = { 'UNIMED': 'Unimed', 'BRADESCO SAÚDE': 'Bradesco Saúde', 'BRADESCO OPERADORA': 'Bradesco Operadora', 'MEDISERVICE': 'Mediservice', 'SULAMÉRICA': 'SulAmérica', 'PETROBRÁS': 'Petrobras' };
@@ -490,7 +565,7 @@
                   <td class="num" data-r="Faturado">${dinheiro(l.faturado)}</td>
                   <td class="num" data-r="Recebido">${l.recebido === null ? '—' : dinheiro(l.recebido)}</td>
                   <td class="num" data-r="Glosado">${l.glosado === null ? '—' : dinheiro(Math.max(0, l.glosado))}</td>
-                  <td data-r="Situação">${selo(sit)}${l.data_pagamento && l.situacao !== 'aguardando' ? `<small class="quando bloco">pago em ${dataBR(l.data_pagamento)}</small>` : ''}${l.motivo_glosa && (l.situacao === 'glosado' || l.situacao === 'parcial') ? `<small class="motivo">${h(l.motivo_glosa)}</small>` : ''}</td>
+                  <td data-r="Situação">${selo(sit)}${historicoHtml(l)}</td>
                 </tr>`; }).join('')}
             </tbody>
           </table>
@@ -501,8 +576,11 @@
   function situacaoLote(linhas){
     const s = new Set(linhas.map(sitLinha));
     if (s.size === 1) return [...s][0];
-    if (s.size === 2 && s.has('glosado') && s.has('analise')) return 'analise'; // todo glosado, parte em análise
-    return s.has('aguardando') ? 'aguardando' : 'parcial'; // lote misto
+    if (s.has('aguardando')) return 'aguardando';
+    const resto = [...s].filter(x => x !== 'pago');
+    if (s.has('pago') && resto.every(x => x === 'acatada')) return 'pago_acatada';   // a única glosa foi acatada
+    if (!s.has('pago') && resto.every(x => x === 'glosado' || x === 'analise')) return 'analise'; // todo glosado, parte em análise
+    return 'parcial'; // lote misto
   }
 
   // Sugestão de competência pela data de envio (regra do Willian): enviado até

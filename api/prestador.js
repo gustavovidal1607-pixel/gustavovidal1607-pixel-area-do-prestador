@@ -132,6 +132,10 @@ module.exports = L.rota(async (req, res) => {
               to_char(data, 'YYYY-MM-DD') AS data, grau, codigo, procedimento, qtd::float8 AS qtd,
               faturado::float8 AS faturado, recebido::float8 AS recebido, glosado::float8 AS glosado,
               to_char(data_pagamento, 'YYYY-MM-DD') AS data_pagamento, status, situacao, motivo_glosa, medico,
+              -- histórico da guia (recurso / glosa acatada) na coluna Situação — Gustavo 26/11
+              status_inicial, to_char(data_pagamento_inicial, 'YYYY-MM-DD') AS data_pagamento_inicial,
+              recurso_recursado::float8 AS recurso_recursado, recurso_acatado::float8 AS recurso_acatado,
+              to_char(recurso_data, 'YYYY-MM-DD') AS recurso_data, recurso_protocolo, resposta_operadora,
               to_char(COALESCE((SELECT d.previsao_pagamento FROM documentos d
                  WHERE d.prestador_id = producao.prestador_id AND d.categoria = 'protocolo' AND d.excluido_em IS NULL
                    AND d.numero = producao.lote AND d.previsao_pagamento IS NOT NULL ORDER BY d.id DESC LIMIT 1),
