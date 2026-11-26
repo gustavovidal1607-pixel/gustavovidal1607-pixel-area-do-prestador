@@ -35,7 +35,6 @@
     rec_recebido: { nome: 'Recurso recebido', classe: 'pago' },
     rec_parcial: { nome: 'Recurso aceito em parte', classe: 'parcial' },
     rec_a_receber: { nome: 'Recurso acatado, a receber', classe: 'aguardando' },
-    pago_acatada: { nome: 'Pago (glosa acatada)', classe: 'pago' },
   };
   // Situação mostrada na linha (selo): a calculada pelos valores, refinada pelo STATUS da planilha —
   // ATENÇÃO = em análise para recurso; ACATADO = glosa acatada; recurso (RECURSADO DIA ..., RECURSO
@@ -574,13 +573,30 @@
 
 
   function situacaoLote(linhas){
-    const s = new Set(linhas.map(sitLinha));
-    if (s.size === 1) return [...s][0];
-    if (s.has('aguardando')) return 'aguardando';
-    const resto = [...s].filter(x => x !== 'pago');
-    if (s.has('pago') && resto.every(x => x === 'acatada')) return 'pago_acatada';   // a única glosa foi acatada
-    if (!s.has('pago') && resto.every(x => x === 'glosado' || x === 'analise')) return 'analise'; // todo glosado, parte em análise
-    return 'parcial'; // lote misto
+    // Selo do lote (Gustavo 26/11). Prioridade quando o lote mistura situações:
+    //   aguardando pagamento > "Recursado dia dd/mm/aaaa" (recurso sem resposta; o mais recente)
+    //   > "Glosa em análise para recurso" (glosa sem recurso: ATENÇÃO ou glosa comum ainda não tratada)
+    //   > resposta do recurso ("Pago - recurso recebido" / "Recurso recebido parcial" / "Recurso negado")
+    //   > "Glosa aceita - Acatado" > Pago.
+    const itens = linhas.map(l => ({ l, r: recursoDaLinha(l) }));
+    if (itens.some(x => x.l.situacao === 'aguardando')) return 'aguardando';
+    const recursos = itens.filter(x => x.r && x.r.sit.startsWith('rec_'));
+    const pendentes = recursos.filter(x => x.r.sit === 'rec_analise');
+    if (pendentes.length){
+      const d = pendentes.map(x => x.l.recurso_data).filter(Boolean).sort().pop();
+      return { nome: d ? `Recursado dia ${dataBR(d)}` : 'Recursado', classe: 'analise' };
+    }
+    const glosaSemRecurso = itens.some(x => (!x.r || x.r.sit === 'analise') && (x.l.situacao === 'glosado' || x.l.situacao === 'parcial'));
+    if (glosaSemRecurso) return { nome: 'Glosa em análise para recurso', classe: 'analise' };
+    if (recursos.length){
+      const sits = new Set(recursos.map(x => x.r.sit));
+      if (sits.size === 1 && sits.has('rec_recebido')) return { nome: 'Pago - recurso recebido', classe: 'pago' };
+      if (sits.size === 1 && sits.has('rec_negado')) return { nome: 'Recurso negado', classe: 'glosado' };
+      if (sits.size === 1 && sits.has('rec_a_receber')) return 'rec_a_receber';
+      return { nome: 'Recurso recebido parcial', classe: 'parcial' };
+    }
+    if (itens.some(x => x.r && x.r.sit === 'acatada')) return { nome: 'Glosa aceita - Acatado', classe: 'acatada' };
+    return 'pago';
   }
 
   // Sugestão de competência pela data de envio (regra do Willian): enviado até
@@ -617,7 +633,8 @@
     return `${ano}-${String(mes).padStart(2, '0')}`;
   }
 
-  const selo = sit => { const s = SITUACOES[sit] || { nome: sit, classe: '' }; return `<span class="sit ${s.classe}">${h(s.nome)}</span>`; };
+  // sit = chave de SITUACOES ou { nome, classe } (selo do lote com recurso)
+  const selo = sit => { const s = typeof sit === 'object' && sit ? sit : SITUACOES[sit] || { nome: sit, classe: '' }; return `<span class="sit ${s.classe}">${h(s.nome)}</span>`; };
 
   // ---------------------------------------------------------------- protocolos e repasses
   async function telaDocumentos(categoria){
