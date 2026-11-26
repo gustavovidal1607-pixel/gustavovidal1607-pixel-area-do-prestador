@@ -188,7 +188,8 @@
   // ---------------------------------------------------------------- entrada no sistema
   const ABAS = {
     faturas: [['prestadores', 'Prestadores'], ['acessos', 'Acessos']],
-    prestador: [['painel', 'Painel'], ['faturas', 'Faturas'], ['resumo', 'Resumo'], ['protocolos', 'Protocolos'], ['espelhos', 'Espelhos de pagamento'], ['repasses', 'Repasses']],
+    // Recursos (Gustavo 26/11/2026): recursos de glosa e glosas acatadas, para todos os prestadores.
+    prestador: [['painel', 'Painel'], ['faturas', 'Faturas'], ['resumo', 'Resumo'], ['recursos', 'Recursos'], ['protocolos', 'Protocolos'], ['espelhos', 'Espelhos de pagamento'], ['repasses', 'Repasses']],
   };
 
   function entrar(usuario){

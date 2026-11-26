@@ -26,7 +26,12 @@
     parcial: { nome: 'Parcial', classe: 'parcial' },
     glosado: { nome: 'Glosado', classe: 'glosado' },
     aguardando: { nome: 'Aguardando', classe: 'aguardando' },
+    // Gustavo 26/11: linha com STATUS "ATENÇÃO" na planilha (glosa que a equipe está analisando para recorrer).
+    analise: { nome: 'Glosado - Em análise para recurso', classe: 'analise' },
   };
+  // Situação mostrada na linha: a calculada pelos valores, menos a glosa com STATUS "ATENÇÃO" (= em análise para recurso).
+  const semAcentoSt = t => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().trim();
+  const sitLinha = l => (l.situacao === 'glosado' || l.situacao === 'parcial') && semAcentoSt(l.status).startsWith('ATENCAO') ? 'analise' : l.situacao;
   const TIPO_NOME = { 'CONSULTA': 'Consulta', 'SADT': 'SADT', 'HONORÁRIO': 'Honorário (GIH)' };
   const tipoNome = t => TIPO_NOME[t] || t;
   const CONVENIO_NOME = { 'UNIMED': 'Unimed', 'BRADESCO SAÚDE': 'Bradesco Saúde', 'BRADESCO OPERADORA': 'Bradesco Operadora', 'MEDISERVICE': 'Mediservice', 'SULAMÉRICA': 'SulAmérica', 'PETROBRÁS': 'Petrobras' };
@@ -35,7 +40,7 @@
   let P = null;
   function novoEstado(){
     return { usuario: CF().estado.usuario.id, painel: null, atualizado: null, comp: null, convenio: '', faturas: {}, filtroSit: '', busca: '', docs: {},
-      medico: '', medicos: [], semMedico: false, aba: 'painel' };
+      medico: '', medicos: [], semMedico: false, aba: 'painel', abertos: new Set(), recursos: null };
   }
 
   // ================================================================ PORTAL DO PRESTADOR
@@ -55,6 +60,7 @@
     if (aba === 'faturas') return telaFaturas();
     if (aba === 'resumo') return telaResumo();
     if (aba === 'lotes') return telaLotes($('#portal'));
+    if (aba === 'recursos') return telaRecursos($('#portal'));
     if (aba === 'protocolos') return telaDocumentos('protocolo');
     if (aba === 'espelhos') return telaDocumentos('espelho');
     if (aba === 'repasses') return telaDocumentos('repasse');
@@ -365,7 +371,7 @@
           <div class="pasta-resumo" id="fat-resumo"></div>
           <div class="pasta-filtros">
             <div class="segmento rolavel" role="group" aria-label="Situação">
-              ${[['', 'Todas'], ['pago', 'Pagas'], ['parcial', 'Parciais'], ['glosado', 'Glosadas'], ['aguardando', 'Aguardando']].map(([v, n]) =>
+              ${[['', 'Todas'], ['pago', 'Pagas'], ['parcial', 'Parciais'], ['glosado', 'Glosadas'], ['analise', 'Em análise p/ recurso'], ['aguardando', 'Aguardando']].map(([v, n]) =>
                 `<button type="button" data-sit="${v}" aria-pressed="${P.filtroSit === v}">${n}</button>`).join('')}
             </div>
             <input type="search" id="fat-busca" placeholder="Buscar paciente ou guia" value="${h(P.busca)}" aria-label="Buscar paciente ou guia">
@@ -401,7 +407,7 @@
     const fonte = P.comp ? (P.faturas[P.comp] || []) : competencias().flatMap(c => (P.faturas[c] || []).map(l => ({ ...l, competencia: c })));
     const todas = fonte.filter(l => !P.convenio || l.convenio === P.convenio);
     const b = P.busca.trim().toUpperCase();
-    const lista = todas.filter(l => (!P.filtroSit || l.situacao === P.filtroSit)
+    const lista = todas.filter(l => (!P.filtroSit || l.situacao === P.filtroSit || sitLinha(l) === P.filtroSit)
       && (!b || String(l.paciente || '').toUpperCase().includes(b) || String(l.guia || '').includes(b)));
     const t = somar(todas.map(l => ({ faturado: l.faturado, recebido: l.recebido, glosado: Math.max(0, l.glosado || 0), a_receber: l.situacao === 'aguardando' ? l.faturado : 0 })));
     const guias = new Set(todas.map(l => `${l.convenio}|${l.guia}`)).size;
@@ -420,32 +426,60 @@
       idx[k].linhas.push(l);
     });
     if (!P.comp) grupos.sort((a, b) => b.competencia.localeCompare(a.competencia));
+    // Gustavo 26/11: cada lote aparece FECHADO (faturado, pago e aguardando do lote) e abre ao clicar.
+    // Com busca de paciente/guia os lotes abrem sozinhos (para ver a guia achada).
+    const abrirTodos = !!b;
     alvo.innerHTML = grupos.map(g => {
-      const tg = somar(g.linhas.map(l => ({ faturado: l.faturado, recebido: l.recebido, glosado: Math.max(0, l.glosado || 0) })));
+      const chaveLote = `${g.competencia}|${g.convenio}|${g.lote || ''}`;
+      const aberto = abrirTodos || P.abertos.has(chaveLote);
+      const tg = somar(g.linhas.map(l => ({ faturado: l.faturado, recebido: l.recebido, glosado: Math.max(0, l.glosado || 0), a_receber: l.situacao === 'aguardando' ? l.faturado : 0 })));
       const nGuias = new Set(g.linhas.map(l => l.guia)).size;
       const sitLote = situacaoLote(g.linhas);
       return `
-        <section class="lote">
-          <header class="lote-cabeca">
-            <div class="lote-id">
+        <section class="lote${aberto ? ' aberto' : ''}" data-lote="${h(chaveLote)}">
+          <button type="button" class="lote-cabeca" aria-expanded="${aberto}" title="${aberto ? 'Fechar o lote' : 'Abrir o lote e ver as guias'}">
+            <span class="lote-id">
+              <span class="seta" aria-hidden="true"></span>
               ${P.comp ? '' : `<span class="chip comp">${compBR(g.competencia)}</span>`}
               <span class="chip conv">${h(g.convenio)}</span>
               <strong>Lote ${h(g.lote || 'sem número')}</strong>
               ${g.data_lote ? `<span class="quando">${dataBR(g.data_lote)}</span>` : ''}
-            </div>
-            <div class="lote-tot">
+            </span>
+            <span class="lote-tot">
               <span>${nGuias} guia${nGuias === 1 ? '' : 's'}</span>
               <span>Faturado <b>${dinheiro(tg.faturado)}</b></span>
-              <span>Recebido <b>${dinheiro(tg.recebido)}</b></span>
+              <span>Pago <b>${dinheiro(tg.recebido)}</b></span>
+              ${tg.glosado >= 0.005 ? `<span>Glosado <b>${dinheiro(tg.glosado)}</b></span>` : ''}
+              <span>Aguardando pagamento <b>${dinheiro(tg.a_receber)}</b></span>
               <span class="previsao">${situacaoHtml(g.convenio, situacaoLinhas(g.linhas))}</span>
               ${selo(sitLote)}
-            </div>
-          </header>
+            </span>
+          </button>
+          ${aberto ? tabelaLote(g) : ''}
+        </section>`;
+    }).join('');
+    alvo.onclick = ev => {
+      const cab = ev.target.closest('.lote-cabeca');
+      if (!cab) return;
+      const sec = cab.closest('.lote'), k = sec.dataset.lote;
+      const g = grupos.find(x => `${x.competencia}|${x.convenio}|${x.lote || ''}` === k);
+      const abrir = !sec.classList.contains('aberto');
+      if (abrir){ P.abertos.add(k); sec.insertAdjacentHTML('beforeend', tabelaLote(g)); }
+      else { P.abertos.delete(k); const t = $('.rolagem', sec); if (t) t.remove(); }
+      sec.classList.toggle('aberto', abrir);
+      cab.setAttribute('aria-expanded', String(abrir));
+      cab.title = abrir ? 'Fechar o lote' : 'Abrir o lote e ver as guias';
+    };
+  }
+
+  // Guias de um lote (aparece quando o lote é aberto).
+  function tabelaLote(g){
+    return `
           <div class="rolagem">
           <table class="tabela-faturas cartoes-mobile">
             <thead><tr><th>Paciente</th><th>Guia</th><th>Data</th><th>Tipo</th><th>Código</th><th>Procedimento</th><th>Faturado</th><th>Recebido</th><th>Glosado</th><th>Situação</th></tr></thead>
             <tbody>
-              ${g.linhas.map(l => `
+              ${g.linhas.map(l => { const sit = sitLinha(l); return `
                 <tr>
                   <th scope="row" class="c-pac" data-r="">${h(l.paciente || '—')}${l.medico && !P.medico ? `<small class="quando bloco">${h(l.medico)}</small>` : ''}</th>
                   <td class="mono" data-r="Guia">${h(l.guia || '—')}</td>
@@ -456,19 +490,18 @@
                   <td class="num" data-r="Faturado">${dinheiro(l.faturado)}</td>
                   <td class="num" data-r="Recebido">${l.recebido === null ? '—' : dinheiro(l.recebido)}</td>
                   <td class="num" data-r="Glosado">${l.glosado === null ? '—' : dinheiro(Math.max(0, l.glosado))}</td>
-                  <td data-r="Situação">${selo(l.situacao)}${l.data_pagamento && l.situacao !== 'aguardando' ? `<small class="quando bloco">pago em ${dataBR(l.data_pagamento)}</small>` : ''}${l.motivo_glosa && (l.situacao === 'glosado' || l.situacao === 'parcial') ? `<small class="motivo">${h(l.motivo_glosa)}</small>` : ''}</td>
-                </tr>`).join('')}
+                  <td data-r="Situação">${selo(sit)}${l.data_pagamento && l.situacao !== 'aguardando' ? `<small class="quando bloco">pago em ${dataBR(l.data_pagamento)}</small>` : ''}${l.motivo_glosa && (l.situacao === 'glosado' || l.situacao === 'parcial') ? `<small class="motivo">${h(l.motivo_glosa)}</small>` : ''}</td>
+                </tr>`; }).join('')}
             </tbody>
           </table>
-          </div>
-        </section>`;
-    }).join('');
+          </div>`;
   }
 
 
   function situacaoLote(linhas){
-    const s = new Set(linhas.map(l => l.situacao));
+    const s = new Set(linhas.map(sitLinha));
     if (s.size === 1) return [...s][0];
+    if (s.size === 2 && s.has('glosado') && s.has('analise')) return 'analise'; // todo glosado, parte em análise
     return s.has('aguardando') ? 'aguardando' : 'parcial'; // lote misto
   }
 
@@ -1177,6 +1210,203 @@
     tela.scrollTop = 0;
   }
 
+  // ================================================================ ABA RECURSOS
+  // Gustavo 26/11/2026 (reunião com a INTEGRADA INFANTIL), para todos os prestadores: recursos de glosa
+  // realizados com a data do envio, recebidos (pagos), negados, glosas acatadas e glosas em análise para
+  // recurso (STATUS "ATENÇÃO"). Números de /api/prestador?acao=recursos (api/_lotes.js). Cada recurso
+  // aparece fechado (totais) e abre ao clicar, mostrando as guias.
+  const RC = { dados: null, conv: '', sit: '', ver: 'recursos', prestadorId: null, abertos: new Set() };
+  const SITUACOES_RECURSO = [['', 'Todas'], ['analise', 'Em análise'], ['recebido', 'Recebidos'], ['negado', 'Negados'], ['a_receber', 'Acatados, aguardando pagamento']];
+  const nomeConv = c => CONVENIO_NOME[c] || c;
+
+  async function telaRecursos(alvo, prestadorId = null){
+    RC.prestadorId = prestadorId;
+    const outro = RC.dados && prestadorId && RC.dados.prestador.id !== prestadorId;
+    const medicoMudou = RC.dados && !prestadorId && (RC.dados.medico || '') !== P.medico;
+    const outroLogin = RC.dados && !prestadorId && RC.dados.prestador.id !== CF().estado.usuario.prestador_id;
+    if (!RC.dados || outro || medicoMudou || outroLogin){
+      alvo.innerHTML = `<div class="carregando">Carregando…</div>`;
+      try {
+        const qm = prestadorId ? '' : qMedico();
+        RC.dados = await CF().api(`/api/prestador?acao=recursos${qm}${prestadorId ? `&prestador=${prestadorId}` : ''}`);
+      } catch (e){ alvo.innerHTML = `<div class="vazio"><strong>Não deu para carregar</strong>${h(e.message)}</div>`; return; }
+    }
+    desenharRecursos(alvo);
+  }
+
+  function desenharRecursos(alvo){
+    const d = RC.dados;
+    const convs = Array.from(new Set([...d.recursos, ...d.acatadas, ...d.analise].map(x => x.convenio))).sort();
+    if (RC.conv && !convs.includes(RC.conv)) RC.conv = '';
+    const doConv = x => !RC.conv || x.convenio === RC.conv;
+    const recursos = d.recursos.filter(r => doConv(r) && (!RC.sit || r.chave === RC.sit || (RC.sit === 'recebido' && r.chave === 'parcial')));
+    const acatadas = d.acatadas.filter(doConv), analise = d.analise.filter(doConv);
+    // totais do convênio escolhido (os cartões não dependem do filtro de situação)
+    const t = { recursos: 0, itens: 0, recursado: 0, recebido: 0, a_receber: 0, negado: 0, em_analise: 0 };
+    d.recursos.filter(doConv).forEach(r => { t.recursos++; t.itens += r.itens.length; ['recursado', 'recebido', 'a_receber', 'negado', 'em_analise'].forEach(k => { t[k] += r[k]; }); });
+    const soma = xs => xs.reduce((s, x) => s + x.valor, 0);
+    const atualizado = d.atualizado_em ? `Atualizado em ${h(CF().quandoBR(d.atualizado_em))}.` : '';
+    const vazio = !d.recursos.length && !d.acatadas.length && !d.analise.length;
+    const n = (q, um, varios) => `${q} ${q === 1 ? um : varios}`;
+    const abas = [['recursos', `Recursos realizados (${t.recursos})`], ['analise', `Em análise para recurso (${analise.length})`], ['acatadas', `Glosas acatadas (${acatadas.length})`]];
+    alvo.innerHTML = `
+      ${cabecalho('Recursos de glosa', `Recursos enviados aos convênios com a data de cada envio, o que foi recebido, o que foi negado e as glosas acatadas. ${atualizado}`, vazio ? '' : `
+      <div class="filtros-portal">
+        <label class="campo"><span>Convênio</span><select id="rc-conv"><option value="">Todos</option>${convs.map(c => `<option value="${h(c)}" ${c === RC.conv ? 'selected' : ''}>${h(nomeConv(c))}</option>`).join('')}</select></label>
+        ${RC.ver === 'recursos' ? `<label class="campo"><span>Situação</span><select id="rc-sit">${SITUACOES_RECURSO.map(([k, nm]) => `<option value="${k}" ${k === RC.sit ? 'selected' : ''}>${h(nm)}</option>`).join('')}</select></label>` : ''}
+        ${RC.prestadorId ? '' : seletorMedico('rc-med')}
+      </div>`)}
+      ${vazio ? `<div class="painel vazio"><strong>Nenhum recurso registrado</strong>Quando a Faturas Med recorrer de uma glosa, o recurso aparece aqui com a data do envio e a resposta do convênio.</div>` : `
+      <div class="cartoes lotes-cartoes recursos-cartoes">
+        ${cartao('Recursado', dinheiro(t.recursado), `${n(t.recursos, 'recurso', 'recursos')} · ${n(t.itens, 'item', 'itens')}`, 'faturado')}
+        ${cartao('Recurso recebido', dinheiro(t.recebido), t.a_receber >= 0.01 ? `+ ${dinheiro(t.a_receber)} acatado, aguardando pagamento` : (t.recursado >= 0.01 ? `${pct(t.recebido / t.recursado * 100)} do recursado` : ''), 'recurso-rec')}
+        ${cartao('Recurso negado', dinheiro(t.negado), t.recursado >= 0.01 ? `${pct(t.negado / t.recursado * 100)} do recursado` : '', 'recurso-neg')}
+        ${cartao('Recurso em análise', dinheiro(t.em_analise), 'enviado, aguardando resposta do convênio', 'areceber')}
+        ${cartao('Em análise para recurso', dinheiro(soma(analise)), `${n(analise.length, 'item glosado', 'itens glosados')} · ainda não recursado`, 'glosado')}
+        ${cartao('Glosas acatadas', dinheiro(soma(acatadas)), `${n(acatadas.length, 'item', 'itens')} · glosa aceita, sem recurso`, 'pctglosa')}
+      </div>
+      <div class="pasta faturas-pasta">
+        <div class="pasta-barra">
+          <div class="segmento rolavel" role="group" aria-label="O que mostrar">
+            ${abas.map(([k, nm]) => `<button type="button" data-rc-ver="${k}" aria-pressed="${RC.ver === k}">${h(nm)}</button>`).join('')}
+          </div>
+        </div>
+        <div id="rc-lista">${RC.ver === 'recursos' ? listaRecursos(recursos) : listaGlosas(RC.ver === 'analise' ? analise : acatadas, RC.ver)}</div>
+      </div>`}`;
+    if (vazio) return;
+    $('#rc-conv', alvo).onchange = ev => { RC.conv = ev.target.value; desenharRecursos(alvo); };
+    const sit = $('#rc-sit', alvo);
+    if (sit) sit.onchange = ev => { RC.sit = ev.target.value; desenharRecursos(alvo); };
+    const med = $('#rc-med', alvo);
+    if (med) med.onchange = ev => { RC.dados = null; trocarMedico(ev.target.value); };
+    $('.segmento', alvo).onclick = ev => {
+      const b = ev.target.closest('[data-rc-ver]');
+      if (b){ RC.ver = b.dataset.rcVer; desenharRecursos(alvo); }
+    };
+    // abre/fecha (recurso ou lote das glosas)
+    $('#rc-lista', alvo).onclick = ev => {
+      const cab = ev.target.closest('.lote-cabeca');
+      if (!cab) return;
+      const sec = cab.closest('.lote'), k = sec.dataset.lote, abrir = !sec.classList.contains('aberto');
+      if (abrir) RC.abertos.add(k); else RC.abertos.delete(k);
+      sec.classList.toggle('aberto', abrir);
+      cab.setAttribute('aria-expanded', String(abrir));
+      const corpo = $('.rolagem', sec);
+      if (corpo) corpo.hidden = !abrir;
+    };
+  }
+
+  // Um bloco por recurso enviado (convênio + data do recurso + lote).
+  function listaRecursos(recursos){
+    if (!recursos.length) return `<div class="vazio"><strong>Nada com esse filtro</strong>Mude o convênio ou a situação.</div>`;
+    return recursos.map(r => {
+      const k = `r|${r.convenio}|${r.data_recurso || ''}|${r.lote}`, aberto = RC.abertos.has(k);
+      const pagos = r.pagamentos.length ? `pago em ${r.pagamentos.map(dataBR).join(', ')}` : '';
+      return `
+        <section class="lote${aberto ? ' aberto' : ''}" data-lote="${h(k)}">
+          <button type="button" class="lote-cabeca" aria-expanded="${aberto}">
+            <span class="lote-id">
+              <span class="seta" aria-hidden="true"></span>
+              <strong class="rc-data">${r.data_recurso ? `Recurso enviado em ${dataBR(r.data_recurso)}` : 'Recurso (data do envio não informada)'}</strong>
+              <span class="chip conv">${h(nomeConv(r.convenio))}</span>
+              <span class="quando">Lote ${h(r.lote || 'sem número')}${r.data_lote ? ` · faturado em ${dataBR(r.data_lote)}` : ''}${r.protocolos.length ? ` · protocolo do recurso ${h(r.protocolos.join(', '))}` : ''}</span>
+            </span>
+            <span class="lote-tot">
+              <span>${r.guias} guia${r.guias === 1 ? '' : 's'}</span>
+              <span>Recursado <b>${dinheiro(r.recursado)}</b></span>
+              ${r.recebido >= 0.005 ? `<span>Recebido <b class="pos">${dinheiro(r.recebido)}</b>${pagos ? ` <small>${h(pagos)}</small>` : ''}</span>` : ''}
+              ${r.a_receber >= 0.005 ? `<span>Acatado, a receber <b>${dinheiro(r.a_receber)}</b></span>` : ''}
+              ${r.negado >= 0.005 ? `<span>Negado <b class="neg">${dinheiro(r.negado)}</b></span>` : ''}
+              ${r.em_analise >= 0.005 ? `<span>Em análise <b>${dinheiro(r.em_analise)}</b></span>` : ''}
+              <span class="sit-lote ${r.classe}">${h(r.situacao)}</span>
+            </span>
+          </button>
+          <div class="rolagem" ${aberto ? '' : 'hidden'}>
+          <table class="tabela-faturas cartoes-mobile">
+            <thead><tr><th>Paciente</th><th>Guia</th><th>Data</th><th>Código</th><th>Procedimento</th><th>Faturado</th><th>Recursado</th><th>Recebido</th><th>Negado</th><th>Situação</th></tr></thead>
+            <tbody>
+              ${r.itens.map(it => `
+                <tr>
+                  <th scope="row" class="c-pac" data-r="">${h(it.paciente || '—')}${it.medico && !P.medico ? `<small class="quando bloco">${h(it.medico)}</small>` : ''}</th>
+                  <td class="mono" data-r="Guia">${h(it.guia || '—')}</td>
+                  <td class="mono" data-r="Data">${dataBR(it.data)}</td>
+                  <td class="mono" data-r="Código">${h(it.codigo || '')}</td>
+                  <td class="c-proc" data-r="Procedimento">${h(it.procedimento || '')}</td>
+                  <td class="num" data-r="Faturado">${dinheiro(it.faturado)}</td>
+                  <td class="num" data-r="Recursado">${dinheiro(it.recursado)}</td>
+                  <td class="num" data-r="Recebido">${it.recebido >= 0.005 ? dinheiro(it.recebido) : it.a_receber >= 0.005 ? `${dinheiro(it.a_receber)} <small class="quando">a receber</small>` : '—'}</td>
+                  <td class="num" data-r="Negado">${it.negado >= 0.005 ? dinheiro(it.negado) : '—'}</td>
+                  <td data-r="Situação"><span class="sit-lote ${({ analise: 'recurso', negado: 'negado', a_receber: 'aguardando' })[it.situacao] || 'finalizado'}">${h(it.nome_situacao)}</span>${it.recebido >= 0.005 && it.data_pagamento ? `<small class="quando bloco">pago em ${dataBR(it.data_pagamento)}</small>` : ''}${it.motivo ? `<small class="motivo">Glosa: ${h(it.motivo)}</small>` : ''}${it.resposta ? `<small class="motivo">Resposta do convênio: ${h(it.resposta)}</small>` : ''}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+          </div>
+        </section>`;
+    }).join('');
+  }
+
+  // Glosas acatadas / em análise para recurso: agrupadas por lote (fechado, abre ao clicar).
+  function listaGlosas(itens, tipo){
+    if (!itens.length) return `<div class="vazio"><strong>${tipo === 'analise' ? 'Nenhuma glosa em análise para recurso' : 'Nenhuma glosa acatada'}</strong>${RC.conv ? 'Mude o convênio.' : ''}</div>`;
+    const grupos = [], idx = {};
+    itens.forEach(it => {
+      const k = `${tipo}|${it.convenio}|${it.lote}`;
+      if (!idx[k]){ idx[k] = { k, convenio: it.convenio, lote: it.lote, data_lote: it.data_lote, itens: [], valor: 0 }; grupos.push(idx[k]); }
+      idx[k].itens.push(it); idx[k].valor += it.valor;
+    });
+    return grupos.map(g => {
+      const aberto = RC.abertos.has(g.k), guias = new Set(g.itens.map(x => x.guia)).size;
+      return `
+        <section class="lote${aberto ? ' aberto' : ''}" data-lote="${h(g.k)}">
+          <button type="button" class="lote-cabeca" aria-expanded="${aberto}">
+            <span class="lote-id">
+              <span class="seta" aria-hidden="true"></span>
+              <span class="chip conv">${h(nomeConv(g.convenio))}</span>
+              <strong>Lote ${h(g.lote || 'sem número')}</strong>
+              ${g.data_lote ? `<span class="quando">${dataBR(g.data_lote)}</span>` : ''}
+            </span>
+            <span class="lote-tot">
+              <span>${guias} guia${guias === 1 ? '' : 's'} · ${g.itens.length} ${g.itens.length === 1 ? 'item' : 'itens'}</span>
+              <span>${tipo === 'analise' ? 'Glosado' : 'Glosa acatada'} <b>${dinheiro(g.valor)}</b></span>
+              ${selo(tipo === 'analise' ? 'analise' : 'glosado')}
+            </span>
+          </button>
+          <div class="rolagem" ${aberto ? '' : 'hidden'}>
+          <table class="tabela-faturas cartoes-mobile">
+            <thead><tr><th>Paciente</th><th>Guia</th><th>Data</th><th>Código</th><th>Procedimento</th><th>Faturado</th><th>Glosado</th><th>Motivo da glosa</th></tr></thead>
+            <tbody>
+              ${g.itens.map(it => `
+                <tr>
+                  <th scope="row" class="c-pac" data-r="">${h(it.paciente || '—')}${it.medico && !P.medico ? `<small class="quando bloco">${h(it.medico)}</small>` : ''}</th>
+                  <td class="mono" data-r="Guia">${h(it.guia || '—')}</td>
+                  <td class="mono" data-r="Data">${dataBR(it.data)}</td>
+                  <td class="mono" data-r="Código">${h(it.codigo || '')}</td>
+                  <td class="c-proc" data-r="Procedimento">${h(it.procedimento || '')}</td>
+                  <td class="num" data-r="Faturado">${dinheiro(it.faturado)}</td>
+                  <td class="num" data-r="Glosado">${dinheiro(it.valor)}</td>
+                  <td data-r="Motivo"><small class="motivo">${h(it.motivo || '—')}</small></td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+          </div>
+        </section>`;
+    }).join('');
+  }
+
+  // Equipe: a mesma aba numa tela por cima (botão "Recursos" do prestador).
+  async function abrirRecursos(prestadorId){
+    const tela = $('#resumo');
+    tela.hidden = false;
+    document.body.classList.add('com-resumo');
+    tela.innerHTML = `
+      <div class="resumo-barra nao-imprimir lotes-barra"><strong>Recursos de glosa</strong><div class="resumo-botoes"><button type="button" class="botao fantasma" id="rc-fechar">Fechar</button></div></div>
+      <div class="portal lotes-equipe" id="recursos-equipe"></div>`;
+    $('#rc-fechar').onclick = fecharResumo;
+    if (RC.dados && RC.dados.prestador.id !== prestadorId){ RC.dados = null; RC.conv = ''; RC.sit = ''; RC.ver = 'recursos'; RC.abertos = new Set(); }
+    await telaRecursos($('#recursos-equipe'), prestadorId);
+    tela.scrollTop = 0;
+  }
+
   // ---------------------------------------------------------------- Excel (.xlsx sem biblioteca)
   // No formato do modelo: uma linha por lote e embaixo as linhas dos pagamentos picados; totais no
   // topo e no rodapé; valores em R$ e datas de verdade (o filtro do Excel funciona).
@@ -1460,6 +1690,7 @@
                 <div class="acoes-li">
                   <button type="button" class="link" data-ver-resumo="${p.id}" ${p.linhas ? '' : 'disabled'}>Resumo</button>
                   ${(p.abas_extras || []).includes('lotes') ? `<button type="button" class="link" data-ver-lotes="${p.id}" ${p.linhas ? '' : 'disabled'}>Lotes Bradesco</button>` : ''}
+                  <button type="button" class="link" data-ver-recursos="${p.id}" ${p.linhas ? '' : 'disabled'}>Recursos</button>
                   <button type="button" class="link" data-renomear-p="${p.id}">Renomear</button>
                   <button type="button" class="link ${p.ativo ? 'perigo' : ''}" data-ativo-p="${p.id}" data-valor="${!p.ativo}">${p.ativo ? 'Desativar' : 'Reativar'}</button>
                 </div>
@@ -1693,6 +1924,8 @@
           CF().aviso(ativar ? 'Prestador reativado.' : 'Prestador desativado.');
         } else if (t.dataset.verLotes){
           return abrirLotes(Number(t.dataset.verLotes));
+        } else if (t.dataset.verRecursos){
+          return abrirRecursos(Number(t.dataset.verRecursos));
         } else if (t.dataset.verResumo){
           const comp = await CF().pedirTexto('Resumo de faturamento', 'Competência (MM/AAAA)', compBR(CF().hojeISO().slice(0, 7)));
           const m = comp && comp.match(/^(0[1-9]|1[0-2])\/(\d{4})$/);
@@ -1772,5 +2005,5 @@
     return CF().api('/api/documentos?acao=registrar', { method: 'POST', body: JSON.stringify({ ...meta, chave: r.pathname, nome: arquivo.name, tamanho: arquivo.size }) });
   }
 
-  window.CFPrestador = { portal, equipe, abrirResumo, abrirLotes };
+  window.CFPrestador = { portal, equipe, abrirResumo, abrirLotes, abrirRecursos };
 })();

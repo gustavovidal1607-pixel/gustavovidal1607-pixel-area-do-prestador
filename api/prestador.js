@@ -2,6 +2,7 @@
 //   GET /api/prestador?acao=painel                 -> totais por competência + convênio
 //   GET /api/prestador?acao=faturas&mes=AAAA-MM[&convenio=X] -> linhas (procedimentos) do mês
 //   GET /api/prestador?acao=resumo&mes=AAAA-MM     -> resumo por convênio + tipo de guia
+//   GET /api/prestador?acao=recursos               -> recursos de glosa, glosas acatadas e em análise para recurso
 //   Todas aceitam &medico=NOME (só esse médico), &medico=- (linhas sem médico) ou nada (tudo junto).
 //
 // O prestador só enxerga o próprio cadastro (vem da sessão, nunca do
@@ -95,6 +96,30 @@ module.exports = L.rota(async (req, res) => {
     const [sync] = await db.query(`SELECT quando FROM sincronizacoes WHERE prestador_id = $1 AND convenio = 'BRADESCO'`, [prestadorId]);
     return L.responder(res, 200, { prestador, ano, anos, lotes, totais: somarLotes(lotes), hoje: L.hojeBrasil(),
       atualizado_em: sync && sync.quando, gerado_em: new Date().toISOString() });
+  }
+
+  // Aba "Recursos" (Gustavo 26/11/2026, todos os prestadores): recursos de glosa enviados (com a data),
+  // recebidos, negados, glosas acatadas e glosas em análise para recurso (STATUS ATENÇÃO). Contas em api/_lotes.js.
+  if (acao === 'recursos'){
+    const linhas = await db.query(
+      `SELECT convenio, lote, to_char(data_lote, 'YYYY-MM-DD') AS data_lote, paciente, guia, to_char(data, 'YYYY-MM-DD') AS data,
+              codigo, procedimento, faturado::float8 AS faturado, recebido::float8 AS recebido, glosado::float8 AS glosado,
+              to_char(data_pagamento, 'YYYY-MM-DD') AS data_pagamento, status, status_inicial, motivo_glosa, resposta_operadora, medico,
+              recurso_recursado::float8 AS recurso_recursado, recurso_acatado::float8 AS recurso_acatado,
+              to_char(recurso_data, 'YYYY-MM-DD') AS recurso_data, recurso_protocolo
+         FROM producao
+        WHERE prestador_id = $1
+          AND (upper(status) LIKE 'RECURS%' OR upper(status) LIKE 'ACATAD%' OR upper(status) LIKE 'ATEN%'
+               OR upper(status_inicial) LIKE '%RECURS%' OR recurso_recursado IS NOT NULL)
+          AND ($2::text IS NULL OR ($2 = '-' AND medico IS NULL) OR medico = $2)
+        ORDER BY convenio, data_lote, lote, guia, data, id`,
+      [prestadorId, medico]
+    );
+    const { montarRecursos, somarRecursos } = require('./_lotes');
+    const r = montarRecursos(linhas);
+    const [sync] = await db.query(`SELECT max(quando) AS quando FROM sincronizacoes WHERE prestador_id = $1`, [prestadorId]);
+    return L.responder(res, 200, { prestador, ...r, totais: somarRecursos(r), hoje: L.hojeBrasil(),
+      atualizado_em: sync && sync.quando, gerado_em: new Date().toISOString(), ...infoMedico });
   }
 
   const mes = p.get('mes') || '';

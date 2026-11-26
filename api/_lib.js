@@ -162,6 +162,11 @@ function prepararBanco(){
     await db.query(`ALTER TABLE producao ADD COLUMN IF NOT EXISTS data_pagamento_inicial DATE`);
     await db.query(`ALTER TABLE producao ADD COLUMN IF NOT EXISTS recurso_recursado NUMERIC(14,2)`);
     await db.query(`ALTER TABLE producao ADD COLUMN IF NOT EXISTS recurso_acatado NUMERIC(14,2)`);
+    // Aba Recursos (Gustavo 26/11/2026): data do envio do recurso (planilha ou XML), protocolo do recurso (XML)
+    // e a RESPOSTA DA OPERADORA da planilha.
+    await db.query(`ALTER TABLE producao ADD COLUMN IF NOT EXISTS recurso_data DATE`);
+    await db.query(`ALTER TABLE producao ADD COLUMN IF NOT EXISTS recurso_protocolo TEXT`);
+    await db.query(`ALTER TABLE producao ADD COLUMN IF NOT EXISTS resposta_operadora TEXT`);
     await db.query(`CREATE TABLE IF NOT EXISTS sincronizacoes (
       prestador_id INT NOT NULL REFERENCES prestadores(id) ON DELETE CASCADE,
       convenio TEXT NOT NULL,

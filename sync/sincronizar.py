@@ -99,6 +99,8 @@ CAMPOS = {
     # Recurso de glosa (Bradescolino): a linha baixada como recurso guarda o pagamento original aqui.
     "status_inicial": ["STATUS INICIAL"],
     "data_pagamento_inicial": ["DATA DO PAGAMENTO INICIAL"],
+    # Resposta do recurso escrita na planilha (aba Recursos do portal: por que o recurso foi negado).
+    "resposta_operadora": ["RESPOSTA DA OPERADORA"],
 }
 OBRIGATORIOS = ["comp", "guia", "faturado"]
 
@@ -125,7 +127,9 @@ EXECUTANTE_PADRAO = {"CENTRUS": "CENTRUS", "PAM": "PAM", "ANGIOMED": "ANGIOMED",
 # as respostas de recurso de glosa (XML TISS RESPOSTA_RECURSO_GLOSA que a Vera baixa em
 # <pasta do prestador>\Demonstrativos\Recursos) e põe em cada linha o valor recursado e o acatado pela operadora
 # (casando por lote + guia + data + código, como o Bradescolino). Os outros prestadores não mudam.
-RECURSOS_XML = {"PATHOLOGY"}
+# Gustavo 26/11: também a INTEGRADA INFANTIL (aba Recursos: data do recurso e protocolo vêm do XML quando
+# a planilha não tem "RECURSADO DIA dd/mm/aaaa" no STATUS / STATUS INICIAL).
+RECURSOS_XML = {"PATHOLOGY", "INTEGRADA INFANTIL"}
 
 
 def sem_acento(texto):
@@ -444,6 +448,7 @@ def ler_planilha(caminho, convenio, medico_pasta=None):
                     "previsao_pagamento": valor_json(pega("previsao_pagamento")),
                     "status_inicial": pega("status_inicial"),
                     "data_pagamento_inicial": valor_json(pega("data_pagamento_inicial")),
+                    "resposta_operadora": pega("resposta_operadora"),
                 }
                 # Datas que vieram como texto ficam como texto; o portal entende DD/MM/AAAA.
                 linhas.append({k: (valor_json(v) if not isinstance(v, str) else v.strip()) for k, v in linha.items()})
@@ -516,10 +521,12 @@ def previsao_sulamerica(prestador, tipo, data_lote):
 
 
 def ler_respostas_recurso(pasta_planilha):
-    """{(lote, guia, data, código): [recursado, acatado]} das respostas de recurso (XML) da pasta
-    Demonstrativos/Recursos ao lado da planilha. O mesmo protocolo de recurso (7...) vem em vários
-    arquivos (um por data de pagamento) e o portal vai completando a resposta: por protocolo vale o
-    maior valor de cada item; protocolos diferentes somam. Lote = protocolo do lote sem o 340/341."""
+    """{(lote, guia, data, código): [recursado, acatado, data do recurso, protocolo do recurso]} das
+    respostas de recurso (XML) da pasta Demonstrativos/Recursos ao lado da planilha. O mesmo protocolo
+    de recurso (7...) vem em vários arquivos (um por data de pagamento) e o portal vai completando a
+    resposta: por protocolo vale o maior valor de cada item; protocolos diferentes somam (a data e o
+    protocolo ficam os do recurso mais recente). Lote = protocolo do lote sem o 340/341.
+    Data do recurso = <dataRecurso> do reciboGlosa (dia em que o recurso foi enviado)."""
     import xml.etree.ElementTree as ET
     pasta = os.path.join(pasta_planilha, "Demonstrativos", "Recursos")
     try:
@@ -541,23 +548,34 @@ def ler_respostas_recurso(pasta_planilha):
         for rg in raiz.iter(ns + "reciboGlosa"):
             prot = so_digitos(rg.findtext(ns + "numeroProtocolo"))
             lote = prot[3:] if len(prot) > 9 and prot[:3] in ("340", "341") else prot
+            data_rec = (rg.findtext(ns + "dataRecurso") or "")[:10]
             for it in rg.iter(ns + "respostaGuiaItens"):
                 k = (lote, so_digitos(it.findtext(ns + "numeroGuiaPrestador")), (it.findtext(ns + "dataRealizacao") or "")[:10],
                      so_digitos(it.findtext(ns + "procRecurso/" + ns + "codigoProcedimento")))
                 num = lambda t: float(str(it.findtext(ns + t) or "0").replace(",", ".") or 0)
-                x = do_arquivo.setdefault(k, [0.0, 0.0])
+                x = do_arquivo.setdefault(k, [0.0, 0.0, data_rec])
                 x[0] += num("valorRecursado")
                 x[1] += num("valorAcatadado")   # (sic) nome do campo no XML do Bradesco
         prot_itens = por_protocolo.setdefault(m.group(1), {})
-        for k, (rv, ac) in do_arquivo.items():
-            x = prot_itens.setdefault(k, [0.0, 0.0])
-            x[0], x[1] = max(x[0], rv), max(x[1], ac)
-    itens = {}
-    for prot_itens in por_protocolo.values():
-        for k, (rv, ac) in prot_itens.items():
-            x = itens.setdefault(k, [0.0, 0.0])
+        for k, (rv, ac, dr) in do_arquivo.items():
+            x = prot_itens.setdefault(k, [0.0, 0.0, dr])
+            x[0], x[1], x[2] = max(x[0], rv), max(x[1], ac), max(x[2], dr)
+    return juntar_recursos(por_protocolo)
+
+
+def juntar_recursos(por_protocolo, itens=None):
+    """Soma os itens de protocolos de recurso diferentes: recursado e acatado somam; data e protocolo
+    ficam os do recurso mais recente. Devolve {chave: [recursado, acatado, data, protocolo]}."""
+    itens = {} if itens is None else itens
+    for prot, prot_itens in por_protocolo.items():
+        for k, v in prot_itens.items():
+            rv, ac, dr = v[0], v[1], v[2]
+            pr = v[3] if len(v) > 3 else prot
+            x = itens.setdefault(k, [0.0, 0.0, "", ""])
             x[0] += rv
             x[1] += ac
+            if (dr or "") >= x[2]:
+                x[2], x[3] = dr or "", pr
     return itens
 
 
@@ -572,13 +590,14 @@ def marcar_recursos(linhas, itens):
         if k in itens:
             por_chave.setdefault(k, []).append(l)
     for k, ls in por_chave.items():
-        recursado, acatado = itens[k]
+        recursado, acatado, data_rec, protocolo = itens[k]
         for i, l in enumerate(ls):
             ultimo = i == len(ls) - 1
             fat = float(l["faturado"]) if isinstance(l["faturado"], (int, float)) else 0.0
             r = recursado if ultimo else min(recursado, fat)
             a = acatado if ultimo else min(acatado, fat)
             l["recurso_recursado"], l["recurso_acatado"] = round(r, 2), round(a, 2)
+            l["recurso_data"], l["recurso_protocolo"] = data_rec or None, protocolo or None
             recursado, acatado = recursado - r, acatado - a
     return sum(len(ls) for ls in por_chave.values())
 
@@ -686,8 +705,7 @@ def main():
             if prestador in RECURSOS_XML and sem_acento(convenio) == "BRADESCO" and not erro:
                 itens = {}
                 for caminho, _ in caminhos:
-                    for k, v in ler_respostas_recurso(os.path.dirname(caminho)).items():
-                        x = itens.setdefault(k, [0.0, 0.0]); x[0] += v[0]; x[1] += v[1]
+                    juntar_recursos({"": ler_respostas_recurso(os.path.dirname(caminho))}, itens)
                 n = marcar_recursos(linhas, itens)
                 print(f"    recursos (XML): {len(itens)} itens respondidos, {n} linhas casadas")
             if sem_acento(convenio).startswith("SULAMERICA"):

@@ -72,9 +72,9 @@ module.exports = L.rota(async (req, res) => {
 
   const colunas = ['previsao_pagamento', 'convenio', 'operadora', 'competencia', 'lote', 'data_lote', 'tipo', 'tipo_original', 'paciente', 'guia', 'data', 'grau',
     'codigo', 'procedimento', 'qtd', 'faturado', 'recebido', 'glosado', 'data_pagamento', 'status', 'situacao', 'motivo_glosa', 'medico',
-    'status_inicial', 'data_pagamento_inicial', 'recurso_recursado', 'recurso_acatado'];
+    'status_inicial', 'data_pagamento_inicial', 'recurso_recursado', 'recurso_acatado', 'recurso_data', 'recurso_protocolo', 'resposta_operadora'];
   const tipos = { previsao_pagamento: 'date', data_lote: 'date', data: 'date', data_pagamento: 'date', qtd: 'numeric', faturado: 'numeric', recebido: 'numeric', glosado: 'numeric',
-    data_pagamento_inicial: 'date', recurso_recursado: 'numeric', recurso_acatado: 'numeric' };
+    data_pagamento_inicial: 'date', recurso_recursado: 'numeric', recurso_acatado: 'numeric', recurso_data: 'date' };
   const definicao = colunas.map(c => `${c} ${tipos[c] || 'text'}`).join(', ');
   const modificado = /^\d{4}-\d{2}-\d{2}T/.test(String(corpo.arquivo_modificado || '')) ? corpo.arquivo_modificado : null;
 
@@ -164,6 +164,16 @@ function data(v){
   return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
 }
 
+// "RECURSADO DIA 25/11/2026", "RECURSADO DIA 29/06/26", "RECURSADO EM 20/11/26" -> "2026-11-25"
+// (data do envio do recurso escrita no STATUS / STATUS INICIAL)
+function dataDoRecurso(v){
+  const m = String(v || '').toUpperCase().match(/RECURSAD[OA]\D*(\d{1,2})\/(\d{1,2})\/(\d{4}|\d{2})(?!\d)/);
+  if (!m) return null;
+  const iso = `${m[3].length === 2 ? '20' + m[3] : m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+  const d = new Date(iso + 'T12:00:00Z');  // data impossível (31/02, 13º mês) fica sem data, não derruba o envio
+  return !isNaN(d) && d.toISOString().slice(0, 10) === iso ? iso : null;
+}
+
 // "10/2026", "2026-10", "2026-10-01" -> "2026-10"
 function competencia(v){
   const t = String(v || '').trim();
@@ -240,5 +250,10 @@ function normalizar(x, fonte){
     data_pagamento_inicial: data(x.data_pagamento_inicial),
     recurso_recursado: numero(x.recurso_recursado),
     recurso_acatado: numero(x.recurso_acatado),
+    // Aba Recursos (Gustavo 26/11): data em que o recurso foi enviado. Vale o que a equipe escreveu na
+    // planilha ("RECURSADO DIA dd/mm/aaaa" no STATUS ou no STATUS INICIAL); sem isso, a <dataRecurso> do XML.
+    recurso_data: dataDoRecurso(x.status) || dataDoRecurso(x.status_inicial) || data(x.recurso_data),
+    recurso_protocolo: texto(x.recurso_protocolo, 30),
+    resposta_operadora: texto(x.resposta_operadora, 500),
   };
 }
