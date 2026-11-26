@@ -755,6 +755,11 @@ body.com-resumo{overflow:hidden;}
 .cartao.recurso-rec{border-top-color:#1B7F4B;}
 .cartao.recurso-neg{border-top-color:#B3261E;}
 .lotes-cartoes .cartao .valor{font-size:19px;}
+.lotes-cartoes .cartao.clicavel{cursor:pointer; transition:box-shadow .15s; outline:none;}
+.lotes-cartoes .cartao.clicavel:hover, .lotes-cartoes .cartao.clicavel:focus-visible{box-shadow:0 0 0 2px var(--linha), var(--sombra);}
+.lotes-cartoes .cartao.ativo{box-shadow:0 0 0 2px var(--tinta), var(--sombra); background:#F4F7FB;}
+.lotes-filtro-cartao{margin:-4px 0 10px; font-size:13px; color:var(--cinza);}
+.lotes-filtro-cartao b{color:var(--tinta);}
 .planilha-lotes{padding:0; overflow:hidden;}
 .planilha-rolagem{overflow:auto; max-height:calc(100vh - 220px); -webkit-overflow-scrolling:touch;}
 .planilha{width:100%; min-width:1500px; border-collapse:separate; border-spacing:0; font-size:12.5px;}

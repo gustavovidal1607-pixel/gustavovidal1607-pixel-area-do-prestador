@@ -1129,7 +1129,10 @@
   // do lote, glosa, aguardando, recurso (em análise, acatado, recebido com data, negado),
   // situação e observação. Números de /api/prestador?acao=lotes (api/_lotes.js).
   // Em lote de recurso a diferença é "Recurso negado", nunca glosa (regra da casa).
-  const LT = { dados: null, ano: '', conv: '', mes: '', sit: '', prestadorId: null };
+  const LT = { dados: null, ano: '', conv: '', mes: '', sit: '', cartao: '', prestadorId: null };
+  // Willian 26/11/2026: os cartões filtram a lista (mesmos campos dos totais, para bater com o cartão).
+  // A aba mostra o lote inteiro (as guias não vêm uma a uma), então o filtro é por lote.
+  const CARTOES_LOTE = { recebido: 'Recebido', glosa: 'Glosa', aguardando: 'Aguardando pagamento', recurso_recebido: 'Recurso recebido', recurso_negado: 'Recurso negado' };
   const convCurto = c => /OPERADORA/i.test(c) ? 'Bradesco Operadora' : 'Bradesco Saúde';
   const SITUACOES_LOTE = [['', 'Todas'], ['aguardando', 'Aguardando pagamento'], ['finalizado', 'Finalizado'], ['com_recurso', 'Com recurso'], ['com_glosa', 'Com glosa ou recurso negado']];
   const COLUNAS_LOTE = [  // [chave, título, tipo]
@@ -1190,7 +1193,10 @@
     const meses = Array.from(new Set(d.lotes.map(l => (l.data_envio || '').slice(0, 7)).filter(Boolean))).sort();
     const convs = Array.from(new Set(d.lotes.map(l => l.convenio))).sort();
     if (LT.mes && !meses.includes(LT.mes)) LT.mes = '';
-    const lotes = lotesFiltrados(), t = somaLotes(lotes);
+    if (LT.cartao && !CARTOES_LOTE[LT.cartao]) LT.cartao = '';
+    // base = filtros de cima (cartões e Excel/PDF); lotes = base com o filtro do cartão (tabela e total)
+    const base = lotesFiltrados(), tc = somaLotes(base);
+    const lotes = LT.cartao ? base.filter(l => (l[LT.cartao] || 0) >= 0.01) : base, t = somaLotes(lotes);
     const atualizado = d.atualizado_em ? `Atualizado em ${h(CF().quandoBR(d.atualizado_em))}.` : '';
     const dt = iso => iso ? dataBR(iso) : '';
     const celula = (row, [k, , tipo]) => {
@@ -1214,6 +1220,8 @@
         <td class="n">${dinheiro(t.recurso_recebido)}</td><td></td><td class="n">${dinheiro(t.recurso_negado)}</td><td colspan="2"></td></tr>`;
     const pags = l => l.pagamentos.map(p => `<li><span>${p.data ? dataBR(p.data) : 'sem data'}</span><b>${dinheiro(p.valor)}</b></li>`).join('')
       + l.recurso_pagamentos.map(p => `<li class="rec"><span>${p.data ? dataBR(p.data) : 'sem data'} · recurso</span><b>${dinheiro(p.valor)}</b></li>`).join('');
+    // cartão clicável: filtra os lotes; clicar no ativo (ou em Faturado) volta a todos
+    const cartaoLote = (k, ...a) => cartao(...a).replace('<div class="cartao ', `<div role="button" tabindex="0" data-lt-cartao="${k}" title="${k ? 'Clique para ver só esses lotes' : 'Clique para ver todos os lotes'}" aria-pressed="${k && LT.cartao === k ? 'true' : 'false'}" class="cartao clicavel ${k && LT.cartao === k ? 'ativo ' : ''}`);
     const valorMobile = (rot, v, classe = '') => v >= 0.005 ? `<div><dt>${rot}</dt><dd class="${classe}">${dinheiro(v)}</dd></div>` : '';
     alvo.innerHTML = `
       ${cabecalho(`Lotes Bradesco ${d.ano}`, `Cada lote enviado ao Bradesco Saúde e ao Bradesco Operadora: cada pagamento com a data, glosa, recurso e o que falta receber. ${atualizado}`, `
@@ -1222,18 +1230,19 @@
         <label class="campo"><span>Convênio</span><select id="lt-conv"><option value="">Saúde e Operadora</option>${convs.map(c => `<option value="${h(c)}" ${c === LT.conv ? 'selected' : ''}>${h(convCurto(c))}</option>`).join('')}</select></label>
         <label class="campo"><span>Mês de envio</span><select id="lt-mes"><option value="">Todos</option>${meses.map(m => `<option value="${m}" ${m === LT.mes ? 'selected' : ''}>${h(CF().MESES[Number(m.slice(5, 7)) - 1])}</option>`).join('')}</select></label>
         <label class="campo"><span>Situação</span><select id="lt-sit">${SITUACOES_LOTE.map(([k, n]) => `<option value="${k}" ${k === LT.sit ? 'selected' : ''}>${h(n)}</option>`).join('')}</select></label>
-        <button type="button" class="botao secundario" id="lt-excel" ${lotes.length ? '' : 'disabled'}>Baixar Excel</button>
-        <button type="button" class="botao primario" id="lt-pdf" ${lotes.length ? '' : 'disabled'}>Baixar PDF</button>
+        <button type="button" class="botao secundario" id="lt-excel" ${base.length ? '' : 'disabled'}>Baixar Excel</button>
+        <button type="button" class="botao primario" id="lt-pdf" ${base.length ? '' : 'disabled'}>Baixar PDF</button>
       </div>`)}
       <p class="resumo-status" id="lt-status" aria-live="polite"></p>
       <div class="cartoes lotes-cartoes">
-        ${cartao('Faturado', dinheiro(t.faturado), `${t.lotes} lote${t.lotes === 1 ? '' : 's'} · ${t.guias} guias`, 'faturado')}
-        ${cartao('Recebido', dinheiro(t.recebido), t.faturado ? `${pct(t.recebido / t.faturado * 100)} do faturado` : '', 'recebido')}
-        ${cartao('Glosa', dinheiro(t.glosa), t.faturado ? `${pct(t.glosa / t.faturado * 100)} do faturado` : '', 'glosado')}
-        ${cartao('Aguardando pagamento', dinheiro(t.aguardando), '', 'areceber')}
-        ${cartao('Recurso recebido', dinheiro(t.recurso_recebido), t.recursado >= 0.01 ? `de ${dinheiro(t.recursado)} recursados` : 'nenhum recurso', 'recurso-rec')}
-        ${cartao('Recurso negado', dinheiro(t.recurso_negado), t.em_analise >= 0.01 ? `${dinheiro(t.em_analise)} em análise` : 'nada em análise', 'recurso-neg')}
+        ${cartaoLote('', 'Faturado', dinheiro(tc.faturado), `${tc.lotes} lote${tc.lotes === 1 ? '' : 's'} · ${tc.guias} guias`, 'faturado')}
+        ${cartaoLote('recebido', 'Recebido', dinheiro(tc.recebido), tc.faturado ? `${pct(tc.recebido / tc.faturado * 100)} do faturado` : '', 'recebido')}
+        ${cartaoLote('glosa', 'Glosa', dinheiro(tc.glosa), tc.faturado ? `${pct(tc.glosa / tc.faturado * 100)} do faturado` : '', 'glosado')}
+        ${cartaoLote('aguardando', 'Aguardando pagamento', dinheiro(tc.aguardando), '', 'areceber')}
+        ${cartaoLote('recurso_recebido', 'Recurso recebido', dinheiro(tc.recurso_recebido), tc.recursado >= 0.01 ? `de ${dinheiro(tc.recursado)} recursados` : 'nenhum recurso', 'recurso-rec')}
+        ${cartaoLote('recurso_negado', 'Recurso negado', dinheiro(tc.recurso_negado), tc.em_analise >= 0.01 ? `${dinheiro(tc.em_analise)} em análise` : 'nada em análise', 'recurso-neg')}
       </div>
+      ${LT.cartao ? `<p class="lotes-filtro-cartao nao-imprimir">Mostrando: <b>${h(CARTOES_LOTE[LT.cartao])}</b> · ${t.lotes} lote${t.lotes === 1 ? '' : 's'} · <button type="button" class="link" id="lt-limpar-cartao">limpar filtro</button></p>` : ''}
       ${lotes.length ? `
       <section class="painel planilha-lotes">
         <div class="planilha-rolagem">
@@ -1269,14 +1278,21 @@
     $('#lt-conv', alvo).onchange = ev => { LT.conv = ev.target.value; desenharLotes(alvo); };
     $('#lt-mes', alvo).onchange = ev => { LT.mes = ev.target.value; desenharLotes(alvo); };
     $('#lt-sit', alvo).onchange = ev => { LT.sit = ev.target.value; desenharLotes(alvo); };
+    alvo.querySelectorAll('[data-lt-cartao]').forEach(c => {
+      const ir = () => { const k = c.dataset.ltCartao; LT.cartao = k && LT.cartao !== k ? k : ''; desenharLotes(alvo); };
+      c.onclick = ir;
+      c.onkeydown = ev => { if (ev.key === 'Enter' || ev.key === ' '){ ev.preventDefault(); ir(); } };
+    });
+    const limpar = $('#lt-limpar-cartao', alvo);
+    if (limpar) limpar.onclick = () => { LT.cartao = ''; desenharLotes(alvo); };
     const st = $('#lt-status', alvo);
     $('#lt-excel', alvo).onclick = () => {
-      try { const nome = nomeArquivoLotes('xlsx'); baixarArquivo(excelLotes(lotes, t), nome, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'); st.textContent = `Pronto: ${nome}`; }
+      try { const nome = nomeArquivoLotes('xlsx'); baixarArquivo(excelLotes(base, tc), nome, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'); st.textContent = `Pronto: ${nome}`; }
       catch (e){ console.error(e); CF().aviso('Não deu para gerar o Excel.', true); }
     };
     $('#lt-pdf', alvo).onclick = async ev => {
       const b = ev.currentTarget; b.disabled = true;
-      try { st.textContent = 'Preparando o PDF…'; const nome = nomeArquivoLotes('pdf'); baixarArquivo(await pdfLotes(lotes, t), nome, 'application/pdf'); st.textContent = `Pronto: ${nome}`; }
+      try { st.textContent = 'Preparando o PDF…'; const nome = nomeArquivoLotes('pdf'); baixarArquivo(await pdfLotes(base, tc), nome, 'application/pdf'); st.textContent = `Pronto: ${nome}`; }
       catch (e){ console.error(e); st.textContent = ''; CF().aviso(e.message || 'Não deu para gerar o PDF.', true); }
       finally { b.disabled = false; }
     };
@@ -1300,7 +1316,7 @@
       <div class="resumo-barra nao-imprimir lotes-barra"><strong>Lotes Bradesco</strong><div class="resumo-botoes"><button type="button" class="botao fantasma" id="lt-fechar">Fechar</button></div></div>
       <div class="portal lotes-equipe" id="lotes-equipe"></div>`;
     $('#lt-fechar').onclick = fecharResumo;
-    if (LT.dados && LT.dados.prestador.id !== prestadorId){ LT.dados = null; LT.ano = ''; LT.conv = ''; LT.mes = ''; LT.sit = ''; }
+    if (LT.dados && LT.dados.prestador.id !== prestadorId){ LT.dados = null; LT.ano = ''; LT.conv = ''; LT.mes = ''; LT.sit = ''; LT.cartao = ''; }
     await telaLotes($('#lotes-equipe'), prestadorId);
     tela.scrollTop = 0;
   }
@@ -1993,7 +2009,7 @@
     };
 
     caixa.onclick = async ev => {
-      const t = ev.target.closest('[data-excluir-doc],[data-editar-doc],[data-renomear-p],[data-ativo-p],[data-ver-resumo]');
+      const t = ev.target.closest('[data-excluir-doc],[data-editar-doc],[data-renomear-p],[data-ativo-p],[data-ver-resumo],[data-ver-lotes],[data-ver-recursos]');
       if (!t) return;
       try {
         if (t.dataset.editarDoc){
