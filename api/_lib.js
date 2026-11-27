@@ -22,7 +22,22 @@ const LIMITE_PDF_DIRETO = 100 * 1024 * 1024; // teto de segurança do envio dire
 // Abas que só um prestador tem (nome do cadastro -> abas). Willian 24/11/2026: "Lotes Bradesco" só da PATHOLOGY.
 // O prestador só vê a aba se estiver aqui, e a API recusa para os outros.
 const ABAS_EXCLUSIVAS = { 'PATHOLOGY': ['lotes'] };
-const abasExtras = nome => ABAS_EXCLUSIVAS[String(nome || '').trim().toUpperCase()] || [];
+// Personalização por prestador (Gustavo 27/11/2026: cada prestador é personalizado do jeito dele; quem não está
+// aqui fica com o comportamento padrão). Vai para o front em "opcoes" (sessão e lista de prestadores da equipe)
+// e o front só liga cada comportamento se a opção estiver ativa. Opções:
+//   abaRecursos        aba "Recursos" (recursos de glosa, glosas acatadas e em análise para recurso)
+//   lotesFechados      Faturas: cada lote fechado (faturado, pago, glosado, aguardando) e abre ao clicar
+//   atencaoEmAnalise   STATUS ATENÇÃO = selo "Glosado - Em análise para recurso" + filtro próprio
+//   historicoGuia      coluna Situação com o histórico da guia (glosa, recurso, resposta) e o selo do recurso
+//   seloLoteRecurso    selo do lote segue o recurso/glosa ("Recursado dia ...", "Recurso negado"...)
+//   acatadoComoAcatado STATUS ACATADO = selo "Acatado"
+//   cartoesRecursoClicaveis  aba Recursos: cartões dos totais filtram a lista (padrão dos cartões de Lotes Bradesco)
+const PERSONALIZACAO = {
+  'INTEGRADA INFANTIL': { abaRecursos: true, lotesFechados: true, atencaoEmAnalise: true, historicoGuia: true, seloLoteRecurso: true, acatadoComoAcatado: true, cartoesRecursoClicaveis: true },   // Gustavo 26/11
+};
+const opcoesPrestador = nome => ({ ...(PERSONALIZACAO[String(nome || '').trim().toUpperCase()] || {}) });
+const abasExtras = nome => (ABAS_EXCLUSIVAS[String(nome || '').trim().toUpperCase()] || [])
+  .concat(opcoesPrestador(nome).abaRecursos ? ['recursos'] : []);
 
 const CONVENIOS_PRESTADOR = ['AMIL', 'ASSIM', 'BRADESCO SAÚDE', 'BRADESCO OPERADORA', 'CABERJ - INTEGRAL', 'CABERJ - SAÚDE', 'CASSI', 'MEDISERVICE', 'OMINT', 'PETROBRÁS', 'SULAMÉRICA', 'UNIMED', 'VALE'];
 // Previsão de pagamento sugerida por convênio. Para cadastrar a regra de um
@@ -506,7 +521,7 @@ function hojeBrasil(){
 }
 
 module.exports = {
-  LIMITE_PDF, LIMITE_PDF_DIRETO, CONVENIOS_PRESTADOR, TIPOS_REPASSE, slug, ehCompetencia, abasExtras,
+  LIMITE_PDF, LIMITE_PDF_DIRETO, CONVENIOS_PRESTADOR, TIPOS_REPASSE, slug, ehCompetencia, abasExtras, opcoesPrestador, PERSONALIZACAO,
   REGRAS_PREVISAO, sugerirPrevisao, ultimoDiaUtil,
   prepararBanco, hashSenha, conferirSenha, normalizarLogin,
   abrirSessao, fecharSessao, usuarioDaSessao, exigirUsuario,

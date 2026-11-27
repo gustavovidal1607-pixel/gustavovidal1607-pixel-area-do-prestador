@@ -98,9 +98,10 @@ module.exports = L.rota(async (req, res) => {
       atualizado_em: sync && sync.quando, gerado_em: new Date().toISOString() });
   }
 
-  // Aba "Recursos" (Gustavo 26/11/2026, todos os prestadores): recursos de glosa enviados (com a data),
+  // Aba "Recursos" (Gustavo 26/11/2026; só quem tem a opção abaRecursos em PERSONALIZACAO, api/_lib.js): recursos de glosa enviados (com a data),
   // recebidos, negados, glosas acatadas e glosas em análise para recurso (STATUS ATENÇÃO). Contas em api/_lotes.js.
   if (acao === 'recursos'){
+    if (!L.opcoesPrestador(prestador.nome).abaRecursos) return L.responder(res, 404, { erro: 'Esta aba não existe para este prestador.' });
     const linhas = await db.query(
       `SELECT convenio, lote, to_char(data_lote, 'YYYY-MM-DD') AS data_lote, paciente, guia, to_char(data, 'YYYY-MM-DD') AS data,
               codigo, procedimento, faturado::float8 AS faturado, recebido::float8 AS recebido, glosado::float8 AS glosado,
@@ -118,7 +119,7 @@ module.exports = L.rota(async (req, res) => {
     const { montarRecursos, somarRecursos } = require('./_lotes');
     const r = montarRecursos(linhas);
     const [sync] = await db.query(`SELECT max(quando) AS quando FROM sincronizacoes WHERE prestador_id = $1`, [prestadorId]);
-    return L.responder(res, 200, { prestador, ...r, totais: somarRecursos(r), hoje: L.hojeBrasil(),
+    return L.responder(res, 200, { prestador, ...r, totais: somarRecursos(r), hoje: L.hojeBrasil(), opcoes: L.opcoesPrestador(prestador.nome),
       atualizado_em: sync && sync.quando, gerado_em: new Date().toISOString(), ...infoMedico });
   }
 

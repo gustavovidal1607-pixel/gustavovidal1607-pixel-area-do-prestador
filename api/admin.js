@@ -30,7 +30,7 @@ module.exports = L.rota(async (req, res) => {
               COALESCE((SELECT json_agg(DISTINCT r.medico) FROM producao r WHERE r.prestador_id = p.id AND r.medico IS NOT NULL), '[]'::json) AS medicos
          FROM prestadores p ORDER BY p.ativo DESC, p.nome`
     );
-    prestadores.forEach(p => { p.abas_extras = L.abasExtras(p.nome); });
+    prestadores.forEach(p => { p.abas_extras = L.abasExtras(p.nome); p.opcoes = L.opcoesPrestador(p.nome); });
     return L.responder(res, 200, { prestadores, usuarios, eu: u.id, convenios_prestador: L.CONVENIOS_PRESTADOR, tipos_repasse: L.TIPOS_REPASSE });
   }
 

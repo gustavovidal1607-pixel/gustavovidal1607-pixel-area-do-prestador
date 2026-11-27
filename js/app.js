@@ -188,8 +188,7 @@
   // ---------------------------------------------------------------- entrada no sistema
   const ABAS = {
     faturas: [['prestadores', 'Prestadores'], ['acessos', 'Acessos']],
-    // Recursos (Gustavo 26/11/2026): recursos de glosa e glosas acatadas, para todos os prestadores.
-    prestador: [['painel', 'Painel'], ['faturas', 'Faturas'], ['resumo', 'Resumo'], ['recursos', 'Recursos'], ['protocolos', 'Protocolos'], ['espelhos', 'Espelhos de pagamento'], ['repasses', 'Repasses']],
+    prestador: [['painel', 'Painel'], ['faturas', 'Faturas'], ['resumo', 'Resumo'], ['protocolos', 'Protocolos'], ['espelhos', 'Espelhos de pagamento'], ['repasses', 'Repasses']],
   };
 
   function entrar(usuario){
@@ -203,6 +202,10 @@
     // Aba exclusiva de um prestador (Lotes Bradesco só da PATHOLOGY): vem do servidor em abas_extras.
     if (usuario.perfil === 'prestador' && (usuario.abas_extras || []).includes('lotes')){
       abas.splice(abas.findIndex(a => a[0] === 'resumo') + 1, 0, ['lotes', 'Lotes Bradesco']);
+    }
+    // Aba Recursos: só quem tem a opção abaRecursos (PERSONALIZACAO em api/_lib.js; Integrada Infantil — Gustavo 27/11).
+    if (usuario.perfil === 'prestador' && (usuario.abas_extras || []).includes('recursos')){
+      abas.splice(abas.findIndex(a => a[0] === 'protocolos'), 0, ['recursos', 'Recursos']);
     }
     estado.aba = abas[0][0];
     const nav = $('#topo-abas');

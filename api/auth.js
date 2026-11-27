@@ -39,7 +39,7 @@ module.exports = L.rota(async (req, res) => {
 
   if (req.method === 'GET' && acao === 'eu'){
     const eu = await L.usuarioDaSessao(req);
-    if (eu) eu.abas_extras = eu.perfil === 'prestador' ? L.abasExtras(eu.prestador_nome) : [];
+    if (eu){ eu.abas_extras = eu.perfil === 'prestador' ? L.abasExtras(eu.prestador_nome) : []; eu.opcoes = eu.perfil === 'prestador' ? L.opcoesPrestador(eu.prestador_nome) : {}; }
     return L.responder(res, 200, { usuario: eu, direto: L.uploadDireto() });
   }
 
@@ -91,6 +91,6 @@ async function usuarioPorId(db, id){
        FROM usuarios u LEFT JOIN prestadores p ON p.id = u.prestador_id WHERE u.id = $1`,
     [id]
   );
-  if (u) u.abas_extras = u.perfil === 'prestador' ? L.abasExtras(u.prestador_nome) : [];
+  if (u){ u.abas_extras = u.perfil === 'prestador' ? L.abasExtras(u.prestador_nome) : []; u.opcoes = u.perfil === 'prestador' ? L.opcoesPrestador(u.prestador_nome) : {}; }
   return u;
 }

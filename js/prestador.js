@@ -61,10 +61,19 @@
     }
     return null;
   }
-  const sitLinha = l => { const r = recursoDaLinha(l); return r ? r.sit : l.situacao; };
+  // Personalização do prestador (api/_lib.js, PERSONALIZACAO — Gustavo 27/11): cada comportamento novo só liga
+  // para quem tem a opção; os outros prestadores ficam como antes.
+  const OPC = () => (CF().estado.usuario && CF().estado.usuario.opcoes) || {};
+  const sitLinha = l => {
+    const o = OPC(), r = recursoDaLinha(l);
+    if (!r) return l.situacao;
+    if (r.sit === 'acatada') return o.acatadoComoAcatado ? 'acatada' : l.situacao;
+    if (r.sit === 'analise') return o.atencaoEmAnalise ? 'analise' : l.situacao;
+    return o.historicoGuia ? r.sit : l.situacao;
+  };
   // Linha do tempo da guia (coluna Situação de Faturas): as etapas, com as datas que existirem.
   function historicoLinha(l){
-    const r = recursoDaLinha(l), etapas = [];
+    const r = OPC().historicoGuia ? recursoDaLinha(l) : null, etapas = [];
     const em = d => d ? ` em ${dataBR(d)}` : '';
     const motivo = l.motivo_glosa ? ` (${l.motivo_glosa})` : '';
     const valor = v => v >= 0.005 ? ` ${dinheiro(v)}` : '';
@@ -103,7 +112,7 @@
   function historicoHtml(l){
     const e = historicoLinha(l);
     if (!e.length) return '';
-    if (!recursoDaLinha(l)) return e.map(x => x.c === 'motivo' ? `<small class="motivo">${h(x.t)}</small>` : `<small class="quando bloco">${h(x.t)}</small>`).join('');
+    if (!OPC().historicoGuia || !recursoDaLinha(l)) return e.map(x => x.c === 'motivo' ? `<small class="motivo">${h(x.t)}</small>` : `<small class="quando bloco">${h(x.t)}</small>`).join('');
     return `<ol class="historico">${e.map(x => `<li class="${x.c || ''}">${h(x.t)}</li>`).join('')}</ol>`;
   }
   const TIPO_NOME = { 'CONSULTA': 'Consulta', 'SADT': 'SADT', 'HONORÁRIO': 'Honorário (GIH)' };
@@ -445,7 +454,7 @@
           <div class="pasta-resumo" id="fat-resumo"></div>
           <div class="pasta-filtros">
             <div class="segmento rolavel" role="group" aria-label="Situação">
-              ${[['', 'Todas'], ['pago', 'Pagas'], ['parcial', 'Parciais'], ['glosado', 'Glosadas'], ['analise', 'Em análise p/ recurso'], ['aguardando', 'Aguardando']].map(([v, n]) =>
+              ${[['', 'Todas'], ['pago', 'Pagas'], ['parcial', 'Parciais'], ['glosado', 'Glosadas'], ...(OPC().atencaoEmAnalise ? [['analise', 'Em análise p/ recurso']] : []), ['aguardando', 'Aguardando']].map(([v, n]) =>
                 `<button type="button" data-sit="${v}" aria-pressed="${P.filtroSit === v}">${n}</button>`).join('')}
             </div>
             <input type="search" id="fat-busca" placeholder="Buscar paciente ou guia" value="${h(P.busca)}" aria-label="Buscar paciente ou guia">
@@ -503,6 +512,7 @@
     // Gustavo 26/11: cada lote aparece FECHADO (faturado, pago e aguardando do lote) e abre ao clicar.
     // Com busca de paciente/guia os lotes abrem sozinhos (para ver a guia achada).
     const abrirTodos = !!b;
+    if (!OPC().lotesFechados){ alvo.onclick = null; alvo.innerHTML = grupos.map(loteAberto).join(''); return; }
     alvo.innerHTML = grupos.map(g => {
       const chaveLote = `${g.competencia}|${g.convenio}|${g.lote || ''}`;
       const aberto = abrirTodos || P.abertos.has(chaveLote);
@@ -546,6 +556,31 @@
     };
   }
 
+  // Lote sempre aberto (como era antes de 26/11), para quem não tem a opção lotesFechados.
+  function loteAberto(g){
+    const tg = somar(g.linhas.map(l => ({ faturado: l.faturado, recebido: l.recebido, glosado: Math.max(0, l.glosado || 0) })));
+    const nGuias = new Set(g.linhas.map(l => l.guia)).size;
+    return `
+        <section class="lote aberto">
+          <header class="lote-cabeca">
+            <div class="lote-id">
+              ${P.comp ? '' : `<span class="chip comp">${compBR(g.competencia)}</span>`}
+              <span class="chip conv">${h(g.convenio)}</span>
+              <strong>Lote ${h(g.lote || 'sem número')}</strong>
+              ${g.data_lote ? `<span class="quando">${dataBR(g.data_lote)}</span>` : ''}
+            </div>
+            <div class="lote-tot">
+              <span>${nGuias} guia${nGuias === 1 ? '' : 's'}</span>
+              <span>Faturado <b>${dinheiro(tg.faturado)}</b></span>
+              <span>Recebido <b>${dinheiro(tg.recebido)}</b></span>
+              <span class="previsao">${situacaoHtml(g.convenio, situacaoLinhas(g.linhas))}</span>
+              ${selo(situacaoLote(g.linhas))}
+            </div>
+          </header>
+          ${tabelaLote(g)}
+        </section>`;
+  }
+
   // Guias de um lote (aparece quando o lote é aberto).
   function tabelaLote(g){
     return `
@@ -573,6 +608,13 @@
 
 
   function situacaoLote(linhas){
+    if (!OPC().seloLoteRecurso){
+      // como era antes de 26/11 (com o selo "Em análise para recurso" de quem tem atencaoEmAnalise)
+      const s = new Set(linhas.map(sitLinha));
+      if (s.size === 1) return [...s][0];
+      if (OPC().atencaoEmAnalise && s.size === 2 && s.has('glosado') && s.has('analise')) return 'analise';
+      return s.has('aguardando') ? 'aguardando' : 'parcial'; // lote misto
+    }
     // Selo do lote (Gustavo 26/11). Prioridade quando o lote mistura situações:
     //   aguardando pagamento > "Recursado dia dd/mm/aaaa" (recurso sem resposta; o mais recente)
     //   > "Glosa em análise para recurso" (glosa sem recurso: ATENÇÃO ou glosa comum ainda não tratada)
@@ -1326,7 +1368,11 @@
   // realizados com a data do envio, recebidos (pagos), negados, glosas acatadas e glosas em análise para
   // recurso (STATUS "ATENÇÃO"). Números de /api/prestador?acao=recursos (api/_lotes.js). Cada recurso
   // aparece fechado (totais) e abre ao clicar, mostrando as guias.
-  const RC = { dados: null, conv: '', sit: '', ver: 'recursos', prestadorId: null, abertos: new Set() };
+  const RC = { dados: null, conv: '', sit: '', ver: 'recursos', cartao: '', prestadorId: null, abertos: new Set() };
+  // Opção cartoesRecursoClicaveis (Integrada — Gustavo 27/11): cartões filtram a lista, no padrão dos cartões da
+  // aba Lotes Bradesco (Willian 26/11): clicar filtra, clicar de novo (ou em Recursado) limpa, ativo destacado.
+  const CARTOES_RECURSO = { recebido: ['recursos', 'Recurso recebido'], negado: ['recursos', 'Recurso negado'], em_analise: ['recursos', 'Recurso em análise'],
+    analise: ['analise', 'Em análise para recurso'], acatadas: ['acatadas', 'Glosas acatadas'] };
   const SITUACOES_RECURSO = [['', 'Todas'], ['analise', 'Em análise'], ['recebido', 'Recebidos'], ['negado', 'Negados'], ['a_receber', 'Acatados, aguardando pagamento']];
   const nomeConv = c => CONVENIO_NOME[c] || c;
 
@@ -1350,7 +1396,11 @@
     const convs = Array.from(new Set([...d.recursos, ...d.acatadas, ...d.analise].map(x => x.convenio))).sort();
     if (RC.conv && !convs.includes(RC.conv)) RC.conv = '';
     const doConv = x => !RC.conv || x.convenio === RC.conv;
-    const recursos = d.recursos.filter(r => doConv(r) && (!RC.sit || r.chave === RC.sit || (RC.sit === 'recebido' && r.chave === 'parcial')));
+    const clicavel = !!(d.opcoes || {}).cartoesRecursoClicaveis;
+    if (!clicavel || (RC.cartao && !CARTOES_RECURSO[RC.cartao])) RC.cartao = '';
+    const doCartao = r => !RC.cartao || CARTOES_RECURSO[RC.cartao][0] !== 'recursos'
+      || (RC.cartao === 'recebido' ? r.recebido >= 0.01 || r.a_receber >= 0.01 : r[RC.cartao] >= 0.01);
+    const recursos = d.recursos.filter(r => doConv(r) && doCartao(r) && (!RC.sit || r.chave === RC.sit || (RC.sit === 'recebido' && r.chave === 'parcial')));
     const acatadas = d.acatadas.filter(doConv), analise = d.analise.filter(doConv);
     // totais do convênio escolhido (os cartões não dependem do filtro de situação)
     const t = { recursos: 0, itens: 0, recursado: 0, recebido: 0, a_receber: 0, negado: 0, em_analise: 0 };
@@ -1359,6 +1409,7 @@
     const atualizado = d.atualizado_em ? `Atualizado em ${h(CF().quandoBR(d.atualizado_em))}.` : '';
     const vazio = !d.recursos.length && !d.acatadas.length && !d.analise.length;
     const n = (q, um, varios) => `${q} ${q === 1 ? um : varios}`;
+    const cartaoRc = (k, ...a) => !clicavel ? cartao(...a) : cartao(...a).replace('<div class="cartao ', `<div role="button" tabindex="0" data-rc-cartao="${k}" title="${k ? 'Clique para ver só esses' : 'Clique para ver todos os recursos'}" aria-pressed="${k && RC.cartao === k ? 'true' : 'false'}" class="cartao clicavel ${k && RC.cartao === k ? 'ativo ' : ''}`);
     const abas = [['recursos', `Recursos realizados (${t.recursos})`], ['analise', `Em análise para recurso (${analise.length})`], ['acatadas', `Glosas acatadas (${acatadas.length})`]];
     alvo.innerHTML = `
       ${cabecalho('Recursos de glosa', `Recursos enviados aos convênios com a data de cada envio, o que foi recebido, o que foi negado e as glosas acatadas. ${atualizado}`, vazio ? '' : `
@@ -1369,12 +1420,12 @@
       </div>`)}
       ${vazio ? `<div class="painel vazio"><strong>Nenhum recurso registrado</strong>Quando a Faturas Med recorrer de uma glosa, o recurso aparece aqui com a data do envio e a resposta do convênio.</div>` : `
       <div class="cartoes lotes-cartoes recursos-cartoes">
-        ${cartao('Recursado', dinheiro(t.recursado), `${n(t.recursos, 'recurso', 'recursos')} · ${n(t.itens, 'item', 'itens')}`, 'faturado')}
-        ${cartao('Recurso recebido', dinheiro(t.recebido), t.a_receber >= 0.01 ? `+ ${dinheiro(t.a_receber)} acatado, aguardando pagamento` : (t.recursado >= 0.01 ? `${pct(t.recebido / t.recursado * 100)} do recursado` : ''), 'recurso-rec')}
-        ${cartao('Recurso negado', dinheiro(t.negado), t.recursado >= 0.01 ? `${pct(t.negado / t.recursado * 100)} do recursado` : '', 'recurso-neg')}
-        ${cartao('Recurso em análise', dinheiro(t.em_analise), 'enviado, aguardando resposta do convênio', 'areceber')}
-        ${cartao('Em análise para recurso', dinheiro(soma(analise)), `${n(analise.length, 'item glosado', 'itens glosados')} · ainda não recursado`, 'glosado')}
-        ${cartao('Glosas acatadas', dinheiro(soma(acatadas)), `${n(acatadas.length, 'item', 'itens')} · glosa aceita, sem recurso`, 'pctglosa')}
+        ${cartaoRc('', 'Recursado', dinheiro(t.recursado), `${n(t.recursos, 'recurso', 'recursos')} · ${n(t.itens, 'item', 'itens')}`, 'faturado')}
+        ${cartaoRc('recebido', 'Recurso recebido', dinheiro(t.recebido), t.a_receber >= 0.01 ? `+ ${dinheiro(t.a_receber)} acatado, aguardando pagamento` : (t.recursado >= 0.01 ? `${pct(t.recebido / t.recursado * 100)} do recursado` : ''), 'recurso-rec')}
+        ${cartaoRc('negado', 'Recurso negado', dinheiro(t.negado), t.recursado >= 0.01 ? `${pct(t.negado / t.recursado * 100)} do recursado` : '', 'recurso-neg')}
+        ${cartaoRc('em_analise', 'Recurso em análise', dinheiro(t.em_analise), 'enviado, aguardando resposta do convênio', 'areceber')}
+        ${cartaoRc('analise', 'Em análise para recurso', dinheiro(soma(analise)), `${n(analise.length, 'item glosado', 'itens glosados')} · ainda não recursado`, 'glosado')}
+        ${cartaoRc('acatadas', 'Glosas acatadas', dinheiro(soma(acatadas)), `${n(acatadas.length, 'item', 'itens')} · glosa aceita, sem recurso`, 'pctglosa')}
       </div>
       <div class="pasta faturas-pasta">
         <div class="pasta-barra">
@@ -1382,6 +1433,7 @@
             ${abas.map(([k, nm]) => `<button type="button" data-rc-ver="${k}" aria-pressed="${RC.ver === k}">${h(nm)}</button>`).join('')}
           </div>
         </div>
+        ${RC.cartao && CARTOES_RECURSO[RC.cartao][0] === 'recursos' ? `<p class="lotes-filtro-cartao nao-imprimir" style="padding:8px 16px 0">Mostrando: <b>${h(CARTOES_RECURSO[RC.cartao][1])}</b> · ${n(recursos.length, 'recurso', 'recursos')} · <button type="button" class="link" id="rc-limpar-cartao">limpar filtro</button></p>` : ''}
         <div id="rc-lista">${RC.ver === 'recursos' ? listaRecursos(recursos) : listaGlosas(RC.ver === 'analise' ? analise : acatadas, RC.ver)}</div>
       </div>`}`;
     if (vazio) return;
@@ -1392,8 +1444,20 @@
     if (med) med.onchange = ev => { RC.dados = null; trocarMedico(ev.target.value); };
     $('.segmento', alvo).onclick = ev => {
       const b = ev.target.closest('[data-rc-ver]');
-      if (b){ RC.ver = b.dataset.rcVer; desenharRecursos(alvo); }
+      if (b){ RC.ver = b.dataset.rcVer; RC.cartao = ''; desenharRecursos(alvo); }
     };
+    alvo.querySelectorAll('[data-rc-cartao]').forEach(c => {
+      const ir = () => {
+        const k = c.dataset.rcCartao;
+        RC.cartao = k && RC.cartao !== k ? k : '';
+        RC.ver = RC.cartao ? CARTOES_RECURSO[RC.cartao][0] : 'recursos';
+        desenharRecursos(alvo);
+      };
+      c.onclick = ir;
+      c.onkeydown = ev => { if (ev.key === 'Enter' || ev.key === ' '){ ev.preventDefault(); ir(); } };
+    });
+    const limparRc = $('#rc-limpar-cartao', alvo);
+    if (limparRc) limparRc.onclick = () => { RC.cartao = ''; desenharRecursos(alvo); };
     // abre/fecha (recurso ou lote das glosas)
     $('#rc-lista', alvo).onclick = ev => {
       const cab = ev.target.closest('.lote-cabeca');
@@ -1513,7 +1577,7 @@
       <div class="resumo-barra nao-imprimir lotes-barra"><strong>Recursos de glosa</strong><div class="resumo-botoes"><button type="button" class="botao fantasma" id="rc-fechar">Fechar</button></div></div>
       <div class="portal lotes-equipe" id="recursos-equipe"></div>`;
     $('#rc-fechar').onclick = fecharResumo;
-    if (RC.dados && RC.dados.prestador.id !== prestadorId){ RC.dados = null; RC.conv = ''; RC.sit = ''; RC.ver = 'recursos'; RC.abertos = new Set(); }
+    if (RC.dados && RC.dados.prestador.id !== prestadorId){ RC.dados = null; RC.conv = ''; RC.sit = ''; RC.ver = 'recursos'; RC.cartao = ''; RC.abertos = new Set(); }
     await telaRecursos($('#recursos-equipe'), prestadorId);
     tela.scrollTop = 0;
   }
@@ -1801,7 +1865,7 @@
                 <div class="acoes-li">
                   <button type="button" class="link" data-ver-resumo="${p.id}" ${p.linhas ? '' : 'disabled'}>Resumo</button>
                   ${(p.abas_extras || []).includes('lotes') ? `<button type="button" class="link" data-ver-lotes="${p.id}" ${p.linhas ? '' : 'disabled'}>Lotes Bradesco</button>` : ''}
-                  <button type="button" class="link" data-ver-recursos="${p.id}" ${p.linhas ? '' : 'disabled'}>Recursos</button>
+                  ${(p.abas_extras || []).includes('recursos') ? `<button type="button" class="link" data-ver-recursos="${p.id}" ${p.linhas ? '' : 'disabled'}>Recursos</button>` : ''}
                   <button type="button" class="link" data-renomear-p="${p.id}">Renomear</button>
                   <button type="button" class="link ${p.ativo ? 'perigo' : ''}" data-ativo-p="${p.id}" data-valor="${!p.ativo}">${p.ativo ? 'Desativar' : 'Reativar'}</button>
                 </div>
