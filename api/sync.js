@@ -14,6 +14,9 @@
 // partes, { envio: <id>, parte: i, partes: n, linhas: [...] }. As partes ficam
 // em sync_partes e só a última troca a produção, numa transação só.
 //
+// Planilha BRADESCO pode trazer "chamados": [{ lote, chamado, aberto_em, protocolo, guias_pendentes, situacao }]
+// (CHAMADOS BRADESCO.json da pasta do prestador): trocam os chamados desta planilha na mesma transação.
+//
 // Autorização: sessão de um usuário da EQUIPE (login normal, perfil faturas)
 // OU cabeçalho X-Sync-Token igual à variável SYNC_TOKEN (opcional; no modo
 // local sem variável aceita "teste"). Prestador e recepção não sincronizam.
@@ -86,6 +89,17 @@ module.exports = L.rota(async (req, res) => {
     if (!Number.isInteger(partes) || !Number.isInteger(parte) || parte < 1 || parte > partes || partes > 500) return L.responder(res, 400, { erro: 'Parte inválida.' });
     if (!/^[A-Za-z0-9_-]{8,64}$/.test(envio)) return L.responder(res, 400, { erro: 'Informe o id do envio (envio).' });
   }
+  // Chamados do Bradesco (CHAMADOS BRADESCO.json da pasta do prestador — Willian 26-27/11): quando o
+  // pacote traz "chamados" (lista), eles trocam os chamados desta planilha junto com as linhas.
+  // Pacote sem a chave (script antigo) deixa os chamados como estão.
+  const chamados = Array.isArray(corpo.chamados) ? normalizarChamados(corpo.chamados) : null;
+  const trocaChamados = chamados ? [
+    [`DELETE FROM chamados WHERE prestador_id = $1 AND fonte = $2`, [prestador.id, convenio]],
+    [`INSERT INTO chamados (prestador_id, fonte, lote, chamado, aberto_em, protocolo, guias_pendentes, situacao, atualizado_em)
+      SELECT $1, $2, lote, chamado, aberto_em, protocolo, COALESCE(guias_pendentes, '[]'::jsonb), situacao, now()
+        FROM jsonb_to_recordset($3::jsonb) AS x(lote text, chamado text, aberto_em date, protocolo text, guias_pendentes jsonb, situacao text)`,
+      [prestador.id, convenio, JSON.stringify(chamados)]],
+  ] : [];
   const insercao = (origem) => `INSERT INTO producao (prestador_id, fonte, ${colunas.join(', ')}) ${origem}`;
   const fechamento = [
     // Protocolo cujo número é um lote desta planilha segue o lote: convênio
@@ -111,8 +125,9 @@ module.exports = L.rota(async (req, res) => {
       [insercao(`SELECT $1, $2, ${colunas.join(', ')} FROM json_to_recordset($3::json) AS x(${definicao})`),
         [prestador.id, convenio, JSON.stringify(linhas)]],
       ...fechamento,
+      ...trocaChamados,
     ]);
-    return L.responder(res, 200, { ok: true, prestador: nomePrestador, convenio, linhas: linhas.length, ignoradas: avisos.length, avisos: avisos.slice(0, 50) });
+    return L.responder(res, 200, { ok: true, prestador: nomePrestador, convenio, linhas: linhas.length, chamados: chamados ? chamados.length : undefined, ignoradas: avisos.length, avisos: avisos.slice(0, 50) });
   }
 
   // Parte de um envio grande: guarda. Partes velhas (envio que não terminou) são limpas.
@@ -133,10 +148,11 @@ module.exports = L.rota(async (req, res) => {
         WHERE sp.envio = $3 AND sp.prestador_id = $1 AND sp.fonte = $2 ORDER BY sp.parte`),
       [prestador.id, convenio, envio]],
     ...fechamento,
+    ...trocaChamados,
     [`DELETE FROM sync_partes WHERE envio = $1`, [envio]],
   ]);
   const [{ n: gravadas }] = await db.query(`SELECT count(*)::int AS n FROM producao WHERE prestador_id = $1 AND fonte = $2`, [prestador.id, convenio]);
-  return L.responder(res, 200, { ok: true, prestador: nomePrestador, convenio, parte, partes, linhas: gravadas, ignoradas: avisos.length, avisos: avisos.slice(0, 50) });
+  return L.responder(res, 200, { ok: true, prestador: nomePrestador, convenio, parte, partes, linhas: gravadas, chamados: chamados ? chamados.length : undefined, ignoradas: avisos.length, avisos: avisos.slice(0, 50) });
 });
 
 // ---------------------------------------------------------------- normalização
@@ -203,6 +219,21 @@ function situacao(faturado, recebido, glosado){
   if (glo > 0.005 && rec > 0.005) return 'parcial';
   if (glo > 0.005) return 'glosado';
   return 'pago';
+}
+
+// Chamados: [{ lote, chamado, aberto_em, protocolo, guias_pendentes: [...], situacao }] (lote sem número ou
+// sem chamado fica de fora; mesmo lote duas vezes = vale o último).
+function normalizarChamados(lista){
+  const por = new Map();
+  for (const c of lista.slice(0, 5000)){
+    if (!c || typeof c !== 'object') continue;
+    const lote = texto(c.lote, 60), chamado = texto(c.chamado, 40);
+    if (!lote || !chamado) continue;
+    const guias = Array.isArray(c.guias_pendentes) ? c.guias_pendentes.map(g => texto(g, 60)).filter(Boolean).slice(0, 2000) : [];
+    por.set(lote, { lote, chamado, aberto_em: data(c.aberto_em), protocolo: texto(c.protocolo ?? c.protocolo_bradesco, 40),
+      guias_pendentes: guias, situacao: texto(c.situacao, 60) });
+  }
+  return Array.from(por.values());
 }
 
 function normalizar(x, fonte){

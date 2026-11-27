@@ -64,7 +64,14 @@
   // Personalização do prestador (api/_lib.js, PERSONALIZACAO — Gustavo 27/11): cada comportamento novo só liga
   // para quem tem a opção; os outros prestadores ficam como antes.
   const OPC = () => (CF().estado.usuario && CF().estado.usuario.opcoes) || {};
+  // Willian 26-27/11: guia ainda sem pagamento num lote com chamado aberto no Bradesco = "Chamado aberto nº X"
+  // (laranja). Vale para toda guia aguardando do lote: a lista guias_pendentes do JSON nem sempre bate com a
+  // planilha (guia já baixada lá ou pendente que não está na lista); chamado.guia_pendente vem só como informação.
+  const chamadoDaLinha = l => l.situacao === 'aguardando' && l.chamado && l.chamado.numero
+    ? { nome: `Chamado aberto nº ${l.chamado.numero}`, classe: 'chamado' } : null;
   const sitLinha = l => {
+    const ch = chamadoDaLinha(l);
+    if (ch) return ch;
     const o = OPC(), r = recursoDaLinha(l);
     if (!r) return l.situacao;
     if (r.sit === 'acatada') return o.acatadoComoAcatado ? 'acatada' : l.situacao;
@@ -608,6 +615,12 @@
 
 
   function situacaoLote(linhas){
+    // Lote com chamado aberto no Bradesco e ainda com valor aguardando (Willian 26-27/11): laranja, com nº e data.
+    const comChamado = linhas.find(l => l.chamado && l.chamado.numero);
+    if (comChamado && linhas.some(l => l.situacao === 'aguardando')){
+      const c = comChamado.chamado;
+      return { nome: `Chamado aberto nº ${c.numero}${c.aberto_em ? ` · ${dataBR(c.aberto_em)}` : ''}`, classe: 'chamado' };
+    }
     if (!OPC().seloLoteRecurso){
       // como era antes de 26/11 (com o selo "Em análise para recurso" de quem tem atencaoEmAnalise)
       const s = new Set(linhas.map(sitLinha));
@@ -1188,7 +1201,7 @@
   function lotesFiltrados(){
     return LT.dados.lotes.filter(l => (!LT.conv || l.convenio === LT.conv)
       && (!LT.mes || (l.data_envio || '').slice(0, 7) === LT.mes)
-      && (!LT.sit || (LT.sit === 'aguardando' ? l.classe === 'aguardando' : LT.sit === 'finalizado' ? l.classe === 'finalizado'
+      && (!LT.sit || (LT.sit === 'aguardando' ? (l.classe === 'aguardando' || l.classe === 'chamado') : LT.sit === 'finalizado' ? l.classe === 'finalizado'
         : LT.sit === 'com_recurso' ? l.recursado >= 0.01 : (l.glosa >= 0.01 || l.recurso_negado >= 0.01))));
   }
   function somaLotes(lotes){

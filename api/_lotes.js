@@ -32,10 +32,11 @@ function montarLotes(linhas, hoje = null){
       t = { convenio: l.convenio, lote: l.lote || '', data_envio: null, tipos: new Set(), guias: new Set(),
         faturado: 0, recebido: 0, pagamentos: [], glosa: 0, aguardando: 0, previsao: null,
         recursado: 0, em_analise: 0, acatado: 0, recurso_recebido: 0, recurso_pagamentos: [], recurso_a_receber: 0, recurso_negado: 0,
-        motivos: new Map(), linhas: 0 };
+        motivos: new Map(), linhas: 0, chamado: null };
       por.set(chave, t);
     }
     t.linhas++;
+    if (l.chamado && l.chamado.numero && !t.chamado) t.chamado = { numero: l.chamado.numero, aberto_em: l.chamado.aberto_em || null };
     if (l.data_lote && (!t.data_envio || l.data_lote < t.data_envio)) t.data_envio = l.data_lote;
     if (l.tipo) t.tipos.add(l.tipo);
     t.guias.add(l.guia || `linha-${t.linhas}`);
@@ -89,7 +90,13 @@ function montarLotes(linhas, hoje = null){
       recurso_a_receber: r2(t.recurso_a_receber), recurso_negado: r2(t.recurso_negado),
     };
     // situação do lote
-    if (x.aguardando >= 0.01){
+    if (x.aguardando >= 0.01 && t.chamado){
+      // Willian 26-27/11: prazo vencido e chamado aberto no portal Bradesco Referenciado (laranja, com o nº)
+      const em = t.chamado.aberto_em ? ` · ${t.chamado.aberto_em.slice(8, 10)}/${t.chamado.aberto_em.slice(5, 7)}/${t.chamado.aberto_em.slice(0, 4)}` : '';
+      x.situacao = `Chamado aberto nº ${t.chamado.numero}${em}`;
+      x.classe = 'chamado';
+      x.chamado = t.chamado;
+    } else if (x.aguardando >= 0.01){
       x.situacao = x.recebido >= 0.01 || x.glosa >= 0.01 ? 'Aguardando restante' : 'Aguardando pagamento';
       x.classe = 'aguardando';
     } else if (x.em_analise >= 0.01){ x.situacao = 'Recurso em análise'; x.classe = 'recurso'; }

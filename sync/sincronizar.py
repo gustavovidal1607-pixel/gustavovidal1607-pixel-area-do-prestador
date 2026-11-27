@@ -701,6 +701,39 @@ def marcar_recursos(linhas, itens):
     return sum(len(ls) for ls in por_chave.values())
 
 
+# Chamados do Bradesco (Willian 26-27/11/2026): lote com prazo de pagamento vencido e paciente sem
+# pagamento -> chamado aberto no portal Bradesco Referenciado. Quem abre grava em
+# <CONVÊNIO>\<PRESTADOR>\CHAMADOS BRADESCO.json: {"<lote>": {"chamado", "aberto_em", "protocolo_bradesco",
+# "guias_pendentes", "pacientes", "situacao"}}. Vai no pacote da planilha BRADESCO; o portal mostra o lote
+# como "Chamado aberto nº ..." (laranja) enquanto houver valor aguardando.
+ARQUIVO_CHAMADOS = "CHAMADOS BRADESCO.json"
+
+
+def ler_chamados(caminhos):
+    """Lista de chamados das pastas das planilhas; None se algum arquivo não deu para ler (o portal mantém os de antes)."""
+    chamados = {}
+    for pasta in dict.fromkeys(os.path.dirname(c) for c, _ in caminhos):
+        arq = os.path.join(pasta, ARQUIVO_CHAMADOS)
+        if not os.path.isfile(arq):
+            continue
+        try:
+            with open(arq, encoding="utf-8-sig") as f:
+                dados = json.load(f)
+        except (OSError, ValueError) as e:
+            print(f"  ! não consegui ler {arq} ({e}): os chamados do portal ficam como estavam", file=sys.stderr)
+            return None
+        for lote, c in (dados or {}).items():
+            if not isinstance(c, dict) or not c.get("chamado"):
+                continue
+            chamados[str(lote).strip()] = {
+                "lote": str(lote).strip(), "chamado": str(c.get("chamado")).strip(),
+                "aberto_em": c.get("aberto_em"), "protocolo": c.get("protocolo_bradesco"),
+                "guias_pendentes": [str(g).strip() for g in (c.get("guias_pendentes") or []) if str(g).strip()],
+                "situacao": c.get("situacao"),
+            }
+    return list(chamados.values())
+
+
 class Portal:
     """Conversa com o portal: sessão da equipe (cookie) ou token."""
 
@@ -819,6 +852,12 @@ def main():
                       "arquivo": " + ".join(os.path.basename(c) for c, _ in caminhos),
                       "arquivo_modificado": modificado, "linhas": linhas,
                       "competencias_por_envio": detalhe}
+            if sem_acento(convenio) == "BRADESCO":
+                chamados = ler_chamados(caminhos)
+                if chamados is not None:
+                    pacote["chamados"] = chamados
+                    if chamados:
+                        print(f"    chamados Bradesco: {len(chamados)} lotes com chamado aberto")
             total = round(sum(float(l["faturado"]) for l in linhas if isinstance(l["faturado"], (int, float))), 2)
             print(f"  {convenio:<12} aba {aba or '-':<9} {len(linhas):>5} linhas  faturado {total:>12,.2f}"
                   + (f"  ({len(avisos)} ignoradas)" if avisos else ""))
@@ -850,7 +889,8 @@ def main():
                 continue
             try:
                 r = portal.sincronizar(pacote)
-                print(f"    -> portal: {r.get('linhas')} linhas gravadas" + (f" (em {r.get('partes')} partes)" if r.get("partes") else "") + (f", {r.get('ignoradas')} ignoradas" if r.get("ignoradas") else ""))
+                print(f"    -> portal: {r.get('linhas')} linhas gravadas" + (f" (em {r.get('partes')} partes)" if r.get("partes") else "") + (f", {r.get('ignoradas')} ignoradas" if r.get("ignoradas") else "")
+                      + (f", {r.get('chamados')} chamados" if r.get("chamados") else ""))
             except Exception as e:
                 print(f"  ! {convenio}: envio falhou: {e}", file=sys.stderr)
                 falhas += 1

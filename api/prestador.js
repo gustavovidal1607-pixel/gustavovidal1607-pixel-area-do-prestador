@@ -78,6 +78,10 @@ module.exports = L.rota(async (req, res) => {
               to_char(data_pagamento, 'YYYY-MM-DD') AS data_pagamento, status, situacao, motivo_glosa,
               status_inicial, to_char(data_pagamento_inicial, 'YYYY-MM-DD') AS data_pagamento_inicial,
               recurso_recursado::float8 AS recurso_recursado, recurso_acatado::float8 AS recurso_acatado,
+              -- chamado aberto no Bradesco para o lote (Willian 26-27/11): nº, data e se a guia está entre as pendentes
+              (SELECT json_build_object('numero', c.chamado, 'aberto_em', to_char(c.aberto_em, 'YYYY-MM-DD'),
+                      'guia_pendente', jsonb_array_length(c.guias_pendentes) = 0 OR c.guias_pendentes @> jsonb_build_array(producao.guia))
+                 FROM chamados c WHERE c.prestador_id = producao.prestador_id AND c.fonte = producao.fonte AND c.lote = producao.lote) AS chamado,
               to_char(COALESCE((SELECT d.previsao_pagamento FROM documentos d
                  WHERE d.prestador_id = producao.prestador_id AND d.categoria = 'protocolo' AND d.excluido_em IS NULL
                    AND d.numero = producao.lote AND d.previsao_pagamento IS NOT NULL ORDER BY d.id DESC LIMIT 1),
@@ -137,6 +141,10 @@ module.exports = L.rota(async (req, res) => {
               status_inicial, to_char(data_pagamento_inicial, 'YYYY-MM-DD') AS data_pagamento_inicial,
               recurso_recursado::float8 AS recurso_recursado, recurso_acatado::float8 AS recurso_acatado,
               to_char(recurso_data, 'YYYY-MM-DD') AS recurso_data, recurso_protocolo, resposta_operadora,
+              -- chamado aberto no Bradesco para o lote (Willian 26-27/11): nº, data e se a guia está entre as pendentes
+              (SELECT json_build_object('numero', c.chamado, 'aberto_em', to_char(c.aberto_em, 'YYYY-MM-DD'),
+                      'guia_pendente', jsonb_array_length(c.guias_pendentes) = 0 OR c.guias_pendentes @> jsonb_build_array(producao.guia))
+                 FROM chamados c WHERE c.prestador_id = producao.prestador_id AND c.fonte = producao.fonte AND c.lote = producao.lote) AS chamado,
               to_char(COALESCE((SELECT d.previsao_pagamento FROM documentos d
                  WHERE d.prestador_id = producao.prestador_id AND d.categoria = 'protocolo' AND d.excluido_em IS NULL
                    AND d.numero = producao.lote AND d.previsao_pagamento IS NOT NULL ORDER BY d.id DESC LIMIT 1),

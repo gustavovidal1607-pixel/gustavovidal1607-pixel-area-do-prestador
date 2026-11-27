@@ -191,6 +191,21 @@ function prepararBanco(){
       quando TIMESTAMPTZ NOT NULL DEFAULT now(),
       PRIMARY KEY (prestador_id, convenio)
     )`);
+    // Chamados abertos no portal Bradesco Referenciado (Willian 26-27/11/2026): lote com prazo de
+    // pagamento vencido e paciente sem pagamento. Vem do "CHAMADOS BRADESCO.json" da pasta do
+    // prestador (sync/sincronizar.py); cada sincronização da planilha troca os chamados dela.
+    await db.query(`CREATE TABLE IF NOT EXISTS chamados (
+      prestador_id INT NOT NULL REFERENCES prestadores(id) ON DELETE CASCADE,
+      fonte TEXT NOT NULL,
+      lote TEXT NOT NULL,
+      chamado TEXT NOT NULL,
+      aberto_em DATE,
+      protocolo TEXT,
+      guias_pendentes JSONB NOT NULL DEFAULT '[]'::jsonb,
+      situacao TEXT,
+      atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (prestador_id, fonte, lote)
+    )`);
     // Envio grande da sincronização chega em partes (limite de 4,5 MB por
     // requisição na Vercel); as partes ficam aqui até a última montar tudo.
     await db.query(`CREATE TABLE IF NOT EXISTS sync_partes (
